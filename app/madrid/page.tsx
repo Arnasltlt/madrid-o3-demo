@@ -18,7 +18,21 @@ export default function MadridPage() {
 
   const fetchStatus = async () => {
     try {
-      const response = await fetch('/api/madrid/status')
+      // First try to get status
+      let response = await fetch('/api/madrid/status')
+      
+      // If no data available (503), trigger ingest first
+      if (response.status === 503) {
+        // Trigger ingest to fetch fresh data
+        const ingestResponse = await fetch('/api/madrid/ingest')
+        if (!ingestResponse.ok) {
+          throw new Error('Failed to ingest data')
+        }
+        // Wait a moment for state to be ready, then fetch status again
+        await new Promise(resolve => setTimeout(resolve, 500))
+        response = await fetch('/api/madrid/status')
+      }
+      
       if (!response.ok) {
         throw new Error('Failed to fetch status')
       }
