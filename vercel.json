@@ -1,0 +1,9 @@
+{
+  "crons": [
+    {
+      "path": "/api/madrid/ingest",
+      "schedule": "*/30 * * * *"
+    }
+  ]
+}
+
