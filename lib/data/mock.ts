@@ -14,11 +14,12 @@ export function generateMockHourlyData(hours: number = 48): HourlyData[] {
   ]
 
   const hourlyData: HourlyData[] = []
-  const now = new Date()
+  // Start from the latest complete hour to ensure fresh data
+  const latestCompleteHour = getLatestCompleteHour()
   
-  // Generate data for the last N hours
+  // Generate data for the last N hours, starting from latest complete hour going backwards
   for (let i = hours - 1; i >= 0; i--) {
-    const hour = new Date(now.getTime() - i * 60 * 60 * 1000)
+    const hour = new Date(latestCompleteHour.getTime() - i * 60 * 60 * 1000)
     hour.setMinutes(0, 0, 0)
     
     const stationData: StationData[] = stations.map(station => {

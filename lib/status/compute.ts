@@ -84,10 +84,12 @@ function calculateDataAge(latestHourUTC: string): number {
 
 /**
  * Compute status from hourly data and current state
+ * @param bypassDebounce - If true, immediately flip status without waiting for consecutive counts (for demo mode)
  */
 export function computeStatus(
   hourlyData: HourlyData[],
-  currentState: StatusState | null
+  currentState: StatusState | null,
+  bypassDebounce: boolean = false
 ): StatusState {
   const latestData = getLatestCompleteHourData(hourlyData)
   
@@ -118,14 +120,17 @@ export function computeStatus(
   // Check station coverage
   const coverageReduced = stations.length < 2
   
-  // Freeze state if data is stale or coverage is reduced
-  if ((dataAgeMinutes > STALE_DATA_THRESHOLD_MINUTES || coverageReduced) && currentState) {
+  // Freeze state if data is stale or coverage is reduced (unless bypassed for demo)
+  if (!bypassDebounce && (dataAgeMinutes > STALE_DATA_THRESHOLD_MINUTES || coverageReduced) && currentState) {
     return {
       ...currentState,
       data_age_minutes: dataAgeMinutes,
       last_check_timestamp: formatISOUTC(new Date()),
     }
   }
+  
+  // For demo mode, cap data age to appear fresh
+  const effectiveDataAge = bypassDebounce ? Math.min(dataAgeMinutes, 30) : dataAgeMinutes
 
   // Initialize state if null
   const state: StatusState = currentState || {
@@ -135,21 +140,25 @@ export function computeStatus(
     episode_start: null,
     consecutive_exceeded: 0,
     consecutive_compliant: 0,
-    data_age_minutes: dataAgeMinutes,
+    data_age_minutes: effectiveDataAge,
   }
 
   // Update consecutive counts
   let newConsecutiveExceeded = exceeded ? state.consecutive_exceeded + 1 : 0
   let newConsecutiveCompliant = exceeded ? 0 : state.consecutive_compliant + 1
 
-  // Determine new status with debounce
+  // Determine new status with debounce (unless bypassed for demo)
   let newStatus: Status = state.current_status
   let episodeStart = state.episode_start
   let trigger: TriggerStation | undefined = state.trigger
 
   if (exceeded) {
-    // Need 2 consecutive exceeds to flip to INFO_EXCEEDED
-    if (newConsecutiveExceeded >= DEBOUNCE_COUNT) {
+    // Need 2 consecutive exceeds to flip to INFO_EXCEEDED (unless bypassed)
+    if (bypassDebounce || newConsecutiveExceeded >= DEBOUNCE_COUNT) {
+      if (bypassDebounce) {
+        // For demo mode, set consecutive count to satisfy debounce
+        newConsecutiveExceeded = DEBOUNCE_COUNT
+      }
       if (state.current_status !== 'INFO_EXCEEDED') {
         newStatus = 'INFO_EXCEEDED'
         episodeStart = latestData.hour_utc
@@ -169,8 +178,12 @@ export function computeStatus(
       }
     }
   } else {
-    // Need 2 consecutive compliant hours to recover
-    if (newConsecutiveCompliant >= DEBOUNCE_COUNT) {
+    // Need 2 consecutive compliant hours to recover (unless bypassed)
+    if (bypassDebounce || newConsecutiveCompliant >= DEBOUNCE_COUNT) {
+      if (bypassDebounce) {
+        // For demo mode, set consecutive count to satisfy debounce
+        newConsecutiveCompliant = DEBOUNCE_COUNT
+      }
       if (state.current_status !== 'COMPLIANT') {
         newStatus = 'COMPLIANT'
         episodeStart = null
@@ -186,7 +199,7 @@ export function computeStatus(
     episode_start: episodeStart,
     consecutive_exceeded: newConsecutiveExceeded,
     consecutive_compliant: newConsecutiveCompliant,
-    data_age_minutes: dataAgeMinutes,
+    data_age_minutes: effectiveDataAge,
     trigger,
   }
 }

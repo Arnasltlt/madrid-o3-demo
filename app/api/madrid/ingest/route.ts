@@ -13,11 +13,13 @@ export async function GET(request: Request) {
     initializeState()
 
     const url = new URL(request.url)
+    const demoMode = url.searchParams.get('demo') // 'exceeded' or 'compliant' - no auth needed
     const syntheticMode = url.searchParams.get('synthetic')
     const syntheticToken = url.searchParams.get('token')
     const requiredToken = process.env.SYNTHETIC_MODE_TOKEN
 
     const isSyntheticRequest = syntheticMode === 'exceed' || syntheticMode === 'recover'
+    const isDemoRequest = demoMode === 'exceeded' || demoMode === 'compliant'
 
     if (isSyntheticRequest) {
       if (requiredToken && syntheticToken !== requiredToken) {
@@ -39,7 +41,17 @@ export async function GET(request: Request) {
     let hourlyData: HourlyData[] = []
     let usingMockData = false
     
-    if (isSyntheticRequest) {
+    if (isDemoRequest) {
+      // Demo mode - no auth needed, bypass debounce by setting state directly
+      if (demoMode === 'exceeded') {
+        console.log('Demo mode: exceeded - using exceeded mock data')
+        hourlyData = generateMockExceededData()
+      } else {
+        console.log('Demo mode: compliant - using compliant mock data')
+        hourlyData = generateMockRecoveryData()
+      }
+      usingMockData = true
+    } else if (isSyntheticRequest) {
       if (syntheticMode === 'exceed') {
         console.log('Synthetic exceedance requested - using exceeded mock data')
         hourlyData = generateMockExceededData()
@@ -79,8 +91,8 @@ export async function GET(request: Request) {
     // Get current state
     const currentState = getCurrentState()
 
-    // Compute new status
-    const newState = computeStatus(hourlyData, currentState)
+    // Compute new status (bypass debounce for demo mode)
+    const newState = computeStatus(hourlyData, currentState, isDemoRequest)
 
     // Get latest hour data for changelog
     const latestData = getLatestCompleteHourData(hourlyData)
@@ -105,11 +117,12 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
+      demo_mode: isDemoRequest ? demoMode : null,
       synthetic_mode: isSyntheticRequest ? syntheticMode : null,
       status: statusResponse.status,
       data_age_minutes: statusResponse.data_age_minutes,
       stations_count: statusResponse.stations.length,
-      message: `Status computed: ${statusResponse.status}`,
+      message: `Status computed: ${statusResponse.status}${isDemoRequest ? ' (demo)' : ''}`,
     })
   } catch (error) {
     console.error('Ingest error:', error)

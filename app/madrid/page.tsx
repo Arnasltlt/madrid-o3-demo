@@ -195,6 +195,25 @@ export default function MadridPage() {
     void fetchEpisodes()
   }, [])
 
+  const loadDemo = async (mode: 'exceeded' | 'compliant') => {
+    setLoading(true)
+    try {
+      const response = await fetch(`${INGEST_ENDPOINT}?demo=${mode}`, { cache: 'no-store' })
+      if (!response.ok) {
+        throw new Error(`No se pudo cargar demo: ${mode}`)
+      }
+      // Reload all data after demo load
+      await fetchStatus()
+      await fetchChangelog()
+      await fetchEpisodes()
+    } catch (err) {
+      console.error('Failed to load demo:', err)
+      setError(err instanceof Error ? err.message : 'Error al cargar demo')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const fetchStatus = async () => {
     setLoading(true)
     try {
@@ -344,6 +363,58 @@ export default function MadridPage() {
   return (
     <main style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
       <h1>Estado de Madrid O₃</h1>
+
+      <div
+        style={{
+          marginTop: '1rem',
+          marginBottom: '1.5rem',
+          padding: '1rem',
+          backgroundColor: '#e7f5ff',
+          borderRadius: '8px',
+          border: '2px solid #339af0',
+        }}
+      >
+        <div style={{ fontWeight: 'bold', marginBottom: '0.5rem', color: '#1864ab' }}>🎭 Modo Demo</div>
+        <p style={{ fontSize: '0.9em', marginBottom: '0.75rem', color: '#495057' }}>
+          Cargar ejemplos de datos para ver cómo se ve la aplicación en diferentes estados:
+        </p>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => void loadDemo('exceeded')}
+            disabled={loading}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: '#ff6b6b',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              fontWeight: 'bold',
+              opacity: loading ? 0.6 : 1,
+            }}
+            type="button"
+          >
+            Demo: Umbral Excedido
+          </button>
+          <button
+            onClick={() => void loadDemo('compliant')}
+            disabled={loading}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: '#51cf66',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              fontWeight: 'bold',
+              opacity: loading ? 0.6 : 1,
+            }}
+            type="button"
+          >
+            Demo: Cumplimiento
+          </button>
+        </div>
+      </div>
 
       {statusForView && (
         <p style={{ marginTop: '0.5rem', color: '#555' }}>
