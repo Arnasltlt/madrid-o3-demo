@@ -29,3 +29,13 @@ export function formatISOUTC(date: Date): string {
   return date.toISOString()
 }
 
+/**
+ * Format timestamp with Madrid local time and UTC in smaller text
+ */
+export function formatDateTimeWithUTC(date: Date | string): { local: string; utc: string } {
+  const dateObj = typeof date === 'string' ? new Date(date) : date
+  const local = formatMadridDateTime(dateObj)
+  const utc = formatInTimeZone(dateObj, 'UTC', 'yyyy-MM-dd HH:mm UTC')
+  return { local, utc }
+}
+

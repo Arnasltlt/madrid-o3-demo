@@ -1,4 +1,4 @@
-import type { Status, StatusState, Station, MaxValue } from '@/types/status'
+import type { Status, StatusState, Station, MaxValue, TriggerStation } from '@/types/status'
 import type { HourlyData } from '@/types/station'
 import { getLatestCompleteHourData } from '@/lib/data/eea'
 import { formatISOUTC } from '@/lib/utils/timezone'
@@ -114,8 +114,11 @@ export function computeStatus(
   const exceeded = checkThresholdExceeded(stations)
   const dataAgeMinutes = calculateDataAge(latestData.hour_utc)
   
-  // Freeze state if data is stale
-  if (dataAgeMinutes > STALE_DATA_THRESHOLD_MINUTES && currentState) {
+  // Check station coverage
+  const coverageReduced = stations.length < 2
+  
+  // Freeze state if data is stale or coverage is reduced
+  if ((dataAgeMinutes > STALE_DATA_THRESHOLD_MINUTES || coverageReduced) && currentState) {
     return {
       ...currentState,
       data_age_minutes: dataAgeMinutes,
@@ -141,6 +144,7 @@ export function computeStatus(
   // Determine new status with debounce
   let newStatus: Status = state.current_status
   let episodeStart = state.episode_start
+  let trigger: TriggerStation | undefined = state.trigger
 
   if (exceeded) {
     // Need 2 consecutive exceeds to flip to INFO_EXCEEDED
@@ -148,6 +152,19 @@ export function computeStatus(
       if (state.current_status !== 'INFO_EXCEEDED') {
         newStatus = 'INFO_EXCEEDED'
         episodeStart = latestData.hour_utc
+        // Find the station with highest value >= 180 that triggered
+        const exceededStations = stations.filter(s => s.value >= THRESHOLD)
+        if (exceededStations.length > 0) {
+          const triggerStation = exceededStations.reduce((max, s) => 
+            s.value > max.value ? s : max
+          )
+          trigger = {
+            id: triggerStation.id,
+            name: triggerStation.name,
+            value: triggerStation.value,
+            ts_utc: latestData.hour_utc,
+          }
+        }
       }
     }
   } else {
@@ -156,6 +173,7 @@ export function computeStatus(
       if (state.current_status !== 'COMPLIANT') {
         newStatus = 'COMPLIANT'
         episodeStart = null
+        trigger = undefined
       }
     }
   }
@@ -168,6 +186,7 @@ export function computeStatus(
     consecutive_exceeded: newConsecutiveExceeded,
     consecutive_compliant: newConsecutiveCompliant,
     data_age_minutes: dataAgeMinutes,
+    trigger,
   }
 }
 
@@ -186,6 +205,9 @@ export function buildStatusResponse(
   episode_start: string | null
   duration_hours: number | null
   stations: Station[]
+  why?: string
+  trigger_station?: TriggerStation
+  coverage_reduced?: boolean
 } {
   const latestData = getLatestCompleteHourData(hourlyData)
   
@@ -215,6 +237,15 @@ export function buildStatusResponse(
     durationHours = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60))
   }
 
+  // Check coverage
+  const coverageReduced = stations.length < 2
+
+  // Build why string if INFO_EXCEEDED
+  let why: string | undefined
+  if (state.current_status === 'INFO_EXCEEDED' && state.trigger) {
+    why = `${state.trigger.name}: ${state.trigger.value.toFixed(1)} µg/m³ a las ${latestData.hour_utc}`
+  }
+
   return {
     status: state.current_status,
     data_age_minutes: state.data_age_minutes,
@@ -224,6 +255,9 @@ export function buildStatusResponse(
     episode_start: state.episode_start,
     duration_hours: durationHours,
     stations,
+    why,
+    trigger_station: state.trigger,
+    coverage_reduced: coverageReduced,
   }
 }
 

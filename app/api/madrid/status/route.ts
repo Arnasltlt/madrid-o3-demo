@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getCurrentState, getHourlyData, initializeState, storeHourlyData, updateState } from '@/lib/status/store'
 import { buildStatusResponse, computeStatus } from '@/lib/status/compute'
-import { fetchMadridO3Data, validateDataCoverage } from '@/lib/data/eea'
+import { fetchMadridO3Data, validateDataCoverage, getLatestCompleteHourData } from '@/lib/data/eea'
 import { generateMockHourlyData } from '@/lib/data/mock'
 import type { StatusResponse } from '@/types/status'
 import type { HourlyData } from '@/types/station'
@@ -41,15 +41,18 @@ export async function GET() {
         currentState = getCurrentState()
         const newState = computeStatus(fetchedData, currentState)
         
-        // Find trigger station if status changed
+        // Get latest hour data for changelog
+        const latestData = getLatestCompleteHourData(fetchedData)
+        const hourUtc = latestData?.hour_utc
+        const dataAgeMinutes = newState.data_age_minutes
+
+        // Find trigger station name if status changed
         let triggerStation: string | null = null
-        if (newState.current_status === 'INFO_EXCEEDED' && currentState?.current_status !== 'INFO_EXCEEDED') {
-          const latestData = fetchedData[fetchedData.length - 1]
-          const exceededStation = latestData.stations.find(s => s.value >= 180)
-          triggerStation = exceededStation?.station_name || null
+        if (newState.trigger) {
+          triggerStation = newState.trigger.name
         }
         
-        updateState(newState, triggerStation)
+        updateState(newState, triggerStation, hourUtc, dataAgeMinutes)
         currentState = newState
         hourlyData = fetchedData
       } else {

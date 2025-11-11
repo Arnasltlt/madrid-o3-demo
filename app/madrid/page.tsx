@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { StatusResponse, ChangeLogEntry } from '@/types/status'
-import { formatMadridDateTime } from '@/lib/utils/timezone'
+import { formatMadridDateTime, formatDateTimeWithUTC } from '@/lib/utils/timezone'
 
 export default function MadridPage() {
   const [status, setStatus] = useState<StatusResponse | null>(null)
@@ -61,18 +61,24 @@ export default function MadridPage() {
   const copyNoticeHTML = () => {
     if (!status) return
     
+    const episodeStartLocal = status.episode_start ? formatDateTimeWithUTC(status.episode_start).local : null
+    const episodeStartUTC = status.episode_start ? formatDateTimeWithUTC(status.episode_start).utc : null
+    const max1hLocal = formatDateTimeWithUTC(status.max_1h.timestamp).local
+    const max1hUTC = formatDateTimeWithUTC(status.max_1h.timestamp).utc
+    
     const noticeHTML = `
 <div>
   <h2>Umbral de Información O₃</h2>
   <p><strong>Área:</strong> Aglomeración de Madrid</p>
   <p><strong>Tipo:</strong> Umbral de información O₃ (180 µg/m³, 1 h)</p>
   ${status.episode_start ? `
-  <p><strong>Inicio:</strong> ${formatMadridDateTime(status.episode_start)}</p>
+  <p><strong>Inicio:</strong> ${episodeStartLocal} (${episodeStartUTC})</p>
   <p><strong>Duración:</strong> ${status.duration_hours ? `${status.duration_hours} horas` : 'En curso'}</p>
   ` : ''}
-  <p><strong>Valor máx 1 h:</strong> ${status.max_1h.value} µg/m³ en ${status.max_1h.station}, ${formatMadridDateTime(status.max_1h.timestamp)}</p>
-  <p><strong>Media máx 8 h:</strong> ${status.max_8h} µg/m³</p>
+  <p><strong>Valor máx 1 h:</strong> ${status.max_1h.value.toFixed(1)} µg/m³ en ${status.max_1h.station}, ${max1hLocal} (${max1hUTC})</p>
+  <p><strong>Media máx 8 h:</strong> ${status.max_8h.toFixed(1)} µg/m³</p>
   <p><strong>Pronóstico breve:</strong> Se recomienda consultar las fuentes oficiales para información actualizada.</p>
+  <p style="font-size: 0.85em; color: #666; margin-top: 1em;">Fuente: EEA (European Environment Agency)</p>
 </div>
     `.trim()
     
@@ -100,6 +106,7 @@ export default function MadridPage() {
 
   const isExceeded = status.status === 'INFO_EXCEEDED'
   const isStale = status.data_age_minutes > 90
+  const coverageReduced = status.coverage_reduced || false
 
   return (
     <main style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
@@ -119,7 +126,7 @@ export default function MadridPage() {
         {isExceeded ? 'UMBRAL EXCEDIDO' : 'CUMPLIMIENTO'}
       </div>
 
-      {/* Freshness Banner */}
+      {/* Staleness Banner */}
       {isStale && (
         <div style={{
           marginTop: '1rem',
@@ -128,19 +135,47 @@ export default function MadridPage() {
           borderRadius: '8px',
           border: '2px solid #ffc107',
         }}>
-          <strong>⚠️ Datos antiguos:</strong> Los datos tienen {status.data_age_minutes} minutos de antigüedad. 
-          El estado está congelado hasta que haya datos más recientes.
+          <strong>⚠️ Datos con {status.data_age_minutes} min de retraso;</strong> el estado está congelado.
+        </div>
+      )}
+
+      {/* Coverage Reduced Banner */}
+      {coverageReduced && (
+        <div style={{
+          marginTop: '1rem',
+          padding: '1rem',
+          backgroundColor: '#ffd43b',
+          borderRadius: '8px',
+          border: '2px solid #ffc107',
+        }}>
+          <strong>⚠️ Cobertura reducida:</strong> Menos de 2 estaciones activas en la última hora. 
+          El estado está congelado hasta que se recupere la cobertura.
         </div>
       )}
 
       {/* Por qué section */}
       <section style={{ marginTop: '2rem' }}>
         <h2>Por qué</h2>
-        <p>
-          Según la Directiva (UE) 2024/2881, Anexo I Sección 4, el umbral de información para O₃ 
-          es de 180 µg/m³ (media de 1 hora). Cuando se supera este umbral en cualquier estación 
-          representativa de la Aglomeración de Madrid, se debe informar al público.
-        </p>
+        {isExceeded && status.trigger_station ? (
+          <div style={{ padding: '1rem', backgroundColor: '#fff3cd', borderRadius: '8px' }}>
+            <p><strong>Estado activado por:</strong></p>
+            <ul style={{ marginTop: '0.5rem', paddingLeft: '1.5rem' }}>
+              <li><strong>Estación:</strong> {status.trigger_station.name}</li>
+              <li><strong>Valor:</strong> {status.trigger_station.value.toFixed(1)} µg/m³</li>
+              <li><strong>Hora:</strong> {formatDateTimeWithUTC(status.trigger_station.ts_utc).local} 
+                <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.5rem' }}>
+                  ({formatDateTimeWithUTC(status.trigger_station.ts_utc).utc})
+                </span>
+              </li>
+            </ul>
+          </div>
+        ) : (
+          <p>
+            Según la Directiva (UE) 2024/2881, Anexo I Sección 4, el umbral de información para O₃ 
+            es de 180 µg/m³ (media de 1 hora). Cuando se supera este umbral en cualquier estación 
+            representativa de la Aglomeración de Madrid, se debe informar al público.
+          </p>
+        )}
       </section>
 
       {/* Annex-style Notice */}
@@ -153,12 +188,20 @@ export default function MadridPage() {
           
           {status.episode_start && (
             <>
-              <p><strong>Inicio:</strong> {formatMadridDateTime(status.episode_start)}</p>
+              <p><strong>Inicio:</strong> {formatDateTimeWithUTC(status.episode_start).local}
+                <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.5rem' }}>
+                  ({formatDateTimeWithUTC(status.episode_start).utc})
+                </span>
+              </p>
               <p><strong>Duración:</strong> {status.duration_hours ? `${status.duration_hours} horas` : 'En curso'}</p>
             </>
           )}
           
-          <p><strong>Valor máx 1 h:</strong> {status.max_1h.value} µg/m³ en {status.max_1h.station}, {formatMadridDateTime(status.max_1h.timestamp)}</p>
+          <p><strong>Valor máx 1 h:</strong> {status.max_1h.value.toFixed(1)} µg/m³ en {status.max_1h.station}, {formatDateTimeWithUTC(status.max_1h.timestamp).local}
+            <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.5rem' }}>
+              ({formatDateTimeWithUTC(status.max_1h.timestamp).utc})
+            </span>
+          </p>
           <p><strong>Media máx 8 h:</strong> {status.max_8h} µg/m³</p>
           <p><strong>Pronóstico breve:</strong> Se recomienda consultar las fuentes oficiales para información actualizada.</p>
         </div>
@@ -215,7 +258,13 @@ export default function MadridPage() {
                 <td style={{ padding: '0.75rem', textAlign: 'right', border: '1px solid #ddd', fontWeight: station.value >= 180 ? 'bold' : 'normal' }}>
                   {station.value.toFixed(1)}
                 </td>
-                <td style={{ padding: '0.75rem', border: '1px solid #ddd' }}>{formatMadridDateTime(station.timestamp)}</td>
+                <td style={{ padding: '0.75rem', border: '1px solid #ddd' }}>
+                  {formatDateTimeWithUTC(station.timestamp).local}
+                  <br />
+                  <span style={{ fontSize: '0.85em', color: '#666' }}>
+                    {formatDateTimeWithUTC(station.timestamp).utc}
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -227,12 +276,30 @@ export default function MadridPage() {
         <section style={{ marginTop: '2rem' }}>
           <h2>Registro de Cambios</h2>
           <div style={{ marginTop: '1rem' }}>
-            {changelog.slice(0, 10).map((entry, index) => (
-              <div key={index} style={{ padding: '0.5rem', marginBottom: '0.5rem', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
-                <strong>{formatMadridDateTime(entry.timestamp)}:</strong> {entry.from_status} → {entry.to_status}
-                {entry.trigger_station && ` (Estación: ${entry.trigger_station})`}
-              </div>
-            ))}
+            {changelog.slice(0, 10).map((entry, index) => {
+              const timeLocal = formatDateTimeWithUTC(entry.timestamp).local
+              const timeUTC = formatDateTimeWithUTC(entry.timestamp).utc
+              const hourLocal = entry.hour_utc ? formatDateTimeWithUTC(entry.hour_utc).local : null
+              const hourUTC = entry.hour_utc ? formatDateTimeWithUTC(entry.hour_utc).utc : null
+              return (
+                <div key={index} style={{ padding: '0.75rem', marginBottom: '0.5rem', backgroundColor: '#f8f9fa', borderRadius: '4px' }}>
+                  <div><strong>{timeLocal}</strong> <span style={{ fontSize: '0.85em', color: '#666' }}>({timeUTC})</span></div>
+                  <div>{entry.from_status} → {entry.to_status}</div>
+                  {entry.station_name && (
+                    <div style={{ fontSize: '0.9em', marginTop: '0.25rem' }}>
+                      Estación: {entry.station_name}
+                      {entry.value !== undefined && ` (${entry.value.toFixed(1)} µg/m³)`}
+                      {hourLocal && (
+                        <span> - Hora: {hourLocal} <span style={{ fontSize: '0.85em', color: '#666' }}>({hourUTC})</span></span>
+                      )}
+                      {entry.data_age_minutes_at_flip !== undefined && (
+                        <span> - Edad de datos: {entry.data_age_minutes_at_flip} min</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </section>
       )}

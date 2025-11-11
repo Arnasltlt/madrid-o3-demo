@@ -19,7 +19,12 @@ export function getCurrentState(): StatusState | null {
 /**
  * Update status state and track changes
  */
-export function updateState(newState: StatusState, triggerStation: string | null = null): void {
+export function updateState(
+  newState: StatusState, 
+  triggerStation: string | null = null,
+  hourUtc?: string,
+  dataAgeMinutes?: number
+): void {
   const oldStatus = currentState?.current_status || null
   
   // Track state changes
@@ -29,6 +34,11 @@ export function updateState(newState: StatusState, triggerStation: string | null
       from_status: oldStatus,
       to_status: newState.current_status,
       trigger_station: triggerStation,
+      station_id: newState.trigger?.id,
+      station_name: newState.trigger?.name,
+      value: newState.trigger?.value,
+      hour_utc: hourUtc || newState.trigger?.ts_utc,
+      data_age_minutes_at_flip: dataAgeMinutes ?? newState.data_age_minutes,
     }
     
     changeLog.unshift(changeEntry)
