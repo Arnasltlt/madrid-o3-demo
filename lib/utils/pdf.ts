@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, type PDFPage } from 'pdf-lib'
+import { PDFDocument, StandardFonts, type PDFPage, rgb } from 'pdf-lib'
 import { createHash } from 'crypto'
 import type { StatusResponse } from '@/types/status'
 import { formatDateTimeWithUTC } from './timezone'
@@ -18,237 +18,218 @@ const drawTextSafe = (targetPage: PDFPage, text: string, options: DrawTextOption
   targetPage.drawText(sanitizePdfText(text), options)
 }
 
+const THRESHOLD_UGM3 = 180
+
 export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create()
   const page = pdfDoc.addPage([595.28, 841.89]) // A4 size
-  
+
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
-  
-  // Build notice content using helper
+
+  const wrapText = (text: string, fontSize: number, maxWidth: number): string[] => {
+    const sanitized = sanitizePdfText(text)
+    const words = sanitized.split(/\s+/).filter(Boolean)
+    const lines: string[] = []
+    let currentLine = ''
+
+    words.forEach((word) => {
+      const candidate = currentLine ? `${currentLine} ${word}` : word
+      if (font.widthOfTextAtSize(candidate, fontSize) <= maxWidth) {
+        currentLine = candidate
+      } else {
+        if (currentLine) {
+          lines.push(currentLine)
+        }
+        currentLine = word
+      }
+    })
+
+    if (currentLine) {
+      lines.push(currentLine)
+    }
+
+    return lines.length > 0 ? lines : ['']
+  }
+
   const notice = buildNoticeContent(status)
-  
-  // Generate short identifier from as_of_utc + status + max_1h timestamp
+
   const snapshotId = createHash('sha1')
     .update(`${status.as_of_utc}${status.status}${status.max_1h.timestamp_utc}`)
     .digest('hex')
     .substring(0, 8)
-  
-  let yPos = 800
-  
-  // Title
-  drawTextSafe(page, 'Umbral de Información O₃', {
-    x: 50,
-    y: yPos,
-    size: 18,
-    font: fontBold,
+
+  const pageWidth = page.getWidth()
+  const pageHeight = page.getHeight()
+  const margin = 50
+  let yPos = pageHeight - margin
+
+  const isExceeded = status.status === 'INFO_EXCEEDED'
+  const badgeLabel = isExceeded ? 'UMBRAL DE INFORMACIÓN SUPERADO' : 'EN CUMPLIMIENTO'
+  const badgeGlyph = isExceeded ? '[!]' : '[✓]'
+  const badgeText = `${badgeGlyph} ${badgeLabel}`
+  const zoneTitle = 'Aglomeración de Madrid · Aviso O3'
+
+  drawTextSafe(page, zoneTitle, { x: margin, y: yPos, size: 18, font: fontBold })
+
+  const badgeWidth = fontBold.widthOfTextAtSize(sanitizePdfText(badgeText), 12) + 16
+  const badgeHeight = 24
+  const badgeX = pageWidth - margin - badgeWidth
+  page.drawRectangle({
+    x: badgeX,
+    y: yPos - badgeHeight + 4,
+    width: badgeWidth,
+    height: badgeHeight,
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 1,
   })
-  yPos -= 40
-  
-  // Área
-  drawTextSafe(page, 'Área:', {
-    x: 50,
-    y: yPos,
-    size: 12,
-    font: fontBold,
-  })
-  drawTextSafe(page, notice.area, {
-    x: 100,
-    y: yPos,
-    size: 12,
-    font: font,
-  })
-  yPos -= 25
-  
-  // Tipo
-  drawTextSafe(page, 'Tipo:', {
-    x: 50,
-    y: yPos,
-    size: 12,
-    font: fontBold,
-  })
-  drawTextSafe(page, notice.type, {
-    x: 100,
-    y: yPos,
-    size: 12,
-    font: font,
-  })
-  yPos -= 25
-  
-  // Inicio y duración
-  if (notice.episode_start_local) {
-    drawTextSafe(page, 'Inicio:', {
-      x: 50,
-      y: yPos,
-      size: 12,
-      font: fontBold,
+  drawTextSafe(page, badgeText, { x: badgeX + 8, y: yPos - 6, size: 12, font: fontBold })
+
+  yPos -= 32
+
+  const asOf = formatDateTimeWithUTC(status.as_of_utc)
+  const dataAgeLabel = Number.isFinite(status.data_age_minutes) ? `${status.data_age_minutes} min` : 'N/D'
+  const asOfText = `Actualizado a las ${asOf.local} (${asOf.utc}) · Edad de datos: ${dataAgeLabel}`
+  drawTextSafe(page, asOfText, { x: margin, y: yPos, size: 12, font })
+  yPos -= 18
+
+  const triggerStationName = status.trigger_station?.name ?? notice.max_1h_station
+  const triggerValue = status.trigger_station?.value ?? notice.max_1h_value
+  const triggerTime = formatDateTimeWithUTC(
+    status.trigger_station?.ts_utc ?? status.max_1h.timestamp_utc ?? status.as_of_utc,
+  )
+  const comparisonSymbol = isExceeded ? '≥' : '<'
+  const whyLine = `O3 ${comparisonSymbol} ${THRESHOLD_UGM3} ug/m3 en ${triggerStationName}, ${triggerValue.toFixed(
+    1,
+  )} ug/m3 a las ${triggerTime.local} (${triggerTime.utc}).`
+  drawTextSafe(page, whyLine, { x: margin, y: yPos, size: 11, font })
+  yPos -= 28
+
+  const inicioYDuracion = notice.episode_start_local
+    ? `${notice.episode_start_local} (${notice.episode_start_utc}) - ${
+        notice.duration_hours !== null ? `${notice.duration_hours} horas` : 'En curso'
+      }`
+    : 'Sin episodio en curso'
+
+  const noticeFields = [
+    { label: 'Área', value: notice.area },
+    { label: 'Tipo', value: notice.type },
+    { label: 'Inicio y duración', value: inicioYDuracion },
+    {
+      label: 'Valor máximo 1 h',
+      value: `${notice.max_1h_value.toFixed(1)} ug/m3 - ${notice.max_1h_station} - ${notice.max_1h_local} (${notice.max_1h_utc})`,
+    },
+    { label: 'Media máxima 8 h', value: `${notice.max_8h.toFixed(1)} ug/m3` },
+    { label: 'Pronóstico breve', value: notice.forecast },
+  ]
+
+  const columnWidth = 220
+  const columnGap = 40
+  const columnX = [margin, margin + columnWidth + columnGap]
+  const labelSize = 10
+  const valueSize = 12
+  const lineHeight = 14
+  let currentY = yPos
+
+  for (let row = 0; row < Math.ceil(noticeFields.length / 2); row++) {
+    const rowFields = noticeFields.slice(row * 2, row * 2 + 2)
+    let rowHeight = 0
+
+    rowFields.forEach((field, columnIndex) => {
+      const fieldX = columnX[columnIndex]
+      drawTextSafe(page, field.label.toUpperCase(), { x: fieldX, y: currentY, size: labelSize, font: fontBold })
+
+      const wrappedLines = wrapText(field.value, valueSize, columnWidth)
+      let valueY = currentY - labelSize - 4
+      wrappedLines.forEach((line) => {
+        drawTextSafe(page, line, { x: fieldX, y: valueY, size: valueSize, font })
+        valueY -= lineHeight
+      })
+
+      const fieldHeight = labelSize + 4 + wrappedLines.length * lineHeight
+      rowHeight = Math.max(rowHeight, fieldHeight + 6)
     })
-    drawTextSafe(page, `${notice.episode_start_local} (${notice.episode_start_utc})`, {
-      x: 100,
-      y: yPos,
-      size: 12,
-      font: font,
-    })
-    yPos -= 25
-    
-    drawTextSafe(page, 'Duración:', {
-      x: 50,
-      y: yPos,
-      size: 12,
-      font: fontBold,
-    })
-    const duracion = notice.duration_hours 
-      ? `${notice.duration_hours} horas`
-      : 'En curso'
-    drawTextSafe(page, duracion, {
-      x: 100,
-      y: yPos,
-      size: 12,
-      font: font,
-    })
-    yPos -= 25
+
+    currentY -= rowHeight
   }
-  
-  // Valor máx 1 h
-  drawTextSafe(page, 'Valor máx 1 h:', {
-    x: 50,
-    y: yPos,
-    size: 12,
-    font: fontBold,
-  })
-  drawTextSafe(page, `${notice.max_1h_value.toFixed(1)} µg/m³ en ${notice.max_1h_station}, ${notice.max_1h_local} (${notice.max_1h_utc})`, {
-    x: 100,
-    y: yPos,
-    size: 12,
-    font: fontBold,
-  })
-  yPos -= 25
-  
-  // Media máx 8 h
-  drawTextSafe(page, 'Media máx 8 h:', {
-    x: 50,
-    y: yPos,
-    size: 12,
-    font: fontBold,
-  })
-  drawTextSafe(page, `${notice.max_8h.toFixed(1)} µg/m³`, {
-    x: 100,
-    y: yPos,
-    size: 12,
-    font: fontBold,
-  })
-  yPos -= 25
-  
-  // Pronóstico breve
-  drawTextSafe(page, 'Pronóstico breve:', {
-    x: 50,
-    y: yPos,
-    size: 12,
-    font: fontBold,
-  })
-  drawTextSafe(page, notice.forecast, {
-    x: 100,
-    y: yPos,
-    size: 12,
-    font: font,
-  })
-  yPos -= 40
-  
-  // Tabla de estaciones
-  drawTextSafe(page, 'Tabla de estaciones:', {
-    x: 50,
-    y: yPos,
-    size: 12,
-    font: fontBold,
-  })
-  yPos -= 25
-  
-  // Table header
-  drawTextSafe(page, 'ID', {
-    x: 50,
+
+  yPos = currentY - 24
+
+  drawTextSafe(page, 'Este formato automatiza el contenido exigido. Unidades: ug/m3.', {
+    x: margin,
     y: yPos,
     size: 10,
-    font: fontBold,
+    font,
   })
-  drawTextSafe(page, 'Nombre', {
-    x: 120,
-    y: yPos,
-    size: 10,
-    font: fontBold,
-  })
-  drawTextSafe(page, 'Valor (ug/m3)', {
-    x: 350,
-    y: yPos,
-    size: 10,
-    font: fontBold,
-  })
-  drawTextSafe(page, 'Hora', {
-    x: 450,
-    y: yPos,
-    size: 10,
-    font: fontBold,
-  })
-  yPos -= 20
-  
-  // Table rows
-  let currentPage = page
+  yPos -= 24
+
+  const triggerStationId = status.trigger_station?.id ?? status.max_1h.station_id
+
+  const tableColumns = [
+    { title: 'ID', x: margin },
+    { title: 'Estación', x: margin + 60 },
+    { title: 'Valor (ug/m3)', x: margin + 210 },
+    { title: 'Hora local', x: margin + 320 },
+    { title: 'Hora UTC', x: margin + 430 },
+  ]
+
+  const tableHeaderSize = 10
+  const tableRowHeight = 18
+
+  const renderTableHeader = (targetPage: PDFPage, headerY: number) => {
+    tableColumns.forEach((column) => {
+      drawTextSafe(targetPage, column.title, { x: column.x, y: headerY, size: tableHeaderSize, font: fontBold })
+    })
+  }
+
+  let currentPage: PDFPage = page
+  renderTableHeader(currentPage, yPos)
+  yPos -= tableRowHeight
+
   status.stations.forEach((station) => {
     if (yPos < 100) {
-      currentPage = pdfDoc.addPage([595.28, 841.89])
-      yPos = 800
+      currentPage = pdfDoc.addPage([pageWidth, pageHeight])
+      yPos = pageHeight - margin
+      renderTableHeader(currentPage, yPos)
+      yPos -= tableRowHeight
     }
-    
+
     const horaTime = formatDateTimeWithUTC(station.timestamp_utc)
-    drawTextSafe(currentPage, station.id, {
-      x: 50,
-      y: yPos,
-      size: 10,
-      font: font,
-    })
-    drawTextSafe(currentPage, station.name.substring(0, 30), {
-      x: 120,
-      y: yPos,
-      size: 10,
-      font: font,
-    })
-    drawTextSafe(currentPage, station.value.toFixed(1), {
-      x: 350,
-      y: yPos,
-      size: 10,
-      font: font,
-    })
-    drawTextSafe(currentPage, horaTime.local.substring(0, 16), {
-      x: 450,
-      y: yPos,
-      size: 10,
-      font: font,
-    })
-    
-    yPos -= 20
+    const isTriggerRow = triggerStationId === station.id
+    if (isTriggerRow) {
+      currentPage.drawRectangle({
+        x: margin - 6,
+        y: yPos - 4,
+        width: 2,
+        height: tableRowHeight,
+        color: rgb(0, 0, 0),
+      })
+    }
+
+    drawTextSafe(currentPage, station.id, { x: tableColumns[0].x, y: yPos, size: 11, font })
+    drawTextSafe(currentPage, station.name.substring(0, 30), { x: tableColumns[1].x, y: yPos, size: 11, font })
+    drawTextSafe(currentPage, station.value.toFixed(1), { x: tableColumns[2].x, y: yPos, size: 11, font })
+    drawTextSafe(currentPage, horaTime.local.substring(0, 16), { x: tableColumns[3].x, y: yPos, size: 11, font })
+    drawTextSafe(currentPage, horaTime.utc.substring(0, 16), { x: tableColumns[4].x, y: yPos, size: 11, font })
+
+    yPos -= tableRowHeight
   })
-  
-  // Footer with generation time and snapshot ID (on last page)
+
   const footerY = 50
   const generationTime = formatDateTimeWithUTC(new Date().toISOString())
-  drawTextSafe(currentPage, 'Vista previa no oficial. Unidades: µg/m³', {
-    x: 50,
+  drawTextSafe(currentPage, 'Vista previa no oficial basada en datos públicos. Unidades: ug/m3.', {
+    x: margin,
+    y: footerY + 12,
+    size: 8,
+    font,
+  })
+  drawTextSafe(currentPage, `Generado: ${generationTime.utc} · Fuente: EEA · Hash: ${snapshotId}`, {
+    x: margin,
     y: footerY,
     size: 8,
-    font: font,
+    font,
   })
-  drawTextSafe(currentPage, `Generado: ${generationTime.local} (${generationTime.utc})`, {
-    x: 50,
-    y: footerY - 12,
-    size: 8,
-    font: font,
-  })
-  drawTextSafe(currentPage, `Ventana de datos: ${status.as_of_utc} | Estaciones: ${status.stations.length} | ID: ${snapshotId}`, {
-    x: 50,
-    y: footerY - 24,
-    size: 8,
-    font: font,
-  })
-  
+
   const pdfBytes = await pdfDoc.save()
   return Buffer.from(pdfBytes)
 }

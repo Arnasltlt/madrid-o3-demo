@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type SVGProps } from 'react'
 import Link from 'next/link'
-import type { ChangeLogEntry, StatusJsonContract, StatusResponse, Station, TriggerStation } from '@/types/status'
+import type { ChangeLogEntry, Status, StatusJsonContract, StatusResponse, Station, TriggerStation } from '@/types/status'
 import { formatDateTimeWithUTC } from '@/lib/utils/timezone'
 import { buildNoticeContent } from '@/lib/utils/notice'
 
@@ -12,6 +12,129 @@ const CHANGELOG_ENDPOINT = '/api/madrid/changelog'
 const INGEST_ENDPOINT = '/api/madrid/ingest'
 const DEFAULT_PDF_URL = '/madrid/latest.pdf'
 const STALE_THRESHOLD_MINUTES = 90
+const ERROR_MESSAGE = 'No se pudo actualizar. Reintentando en 5 min.'
+
+type IconProps = SVGProps<SVGSVGElement>
+
+function CheckCircleIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M9 12l2 2 4-4" />
+      <circle cx={12} cy={12} r={10} />
+    </svg>
+  )
+}
+
+function AlertTriangleIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+      <line x1={12} y1={9} x2={12} y2={13} />
+      <line x1={12} y1={17} x2={12.01} y2={17} />
+    </svg>
+  )
+}
+
+function ClockIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <circle cx={12} cy={12} r={9} />
+      <polyline points="12 7 12 12 15 14" />
+    </svg>
+  )
+}
+
+function FilePdfIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <path d="M9 15h1.5a1.5 1.5 0 000-3H9v4" />
+      <path d="M13 11h1a1 1 0 011 1v3h-2" />
+      <path d="M17 15h2" />
+    </svg>
+  )
+}
+
+function CopyIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <rect x={9} y={9} width={13} height={13} rx={2} ry={2} />
+      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+    </svg>
+  )
+}
+
+function InfoIcon(props: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <circle cx={12} cy={12} r={10} />
+      <line x1={12} y1={16} x2={12} y2={12} />
+      <line x1={12} y1={8} x2={12.01} y2={8} />
+    </svg>
+  )
+}
+
+const STATUS_LABELS: Record<Status, string> = {
+  INFO_EXCEEDED: 'UMBRAL DE INFORMACIÓN SUPERADO',
+  COMPLIANT: 'EN CUMPLIMIENTO',
+}
+
+const THRESHOLD_UGM3 = 180
 
 interface FormattedDateTime {
   local: string
@@ -143,6 +266,7 @@ function deriveStatusFromContract(contract: StatusJsonContract): StatusResponse 
     notice_pdf_url: contract.notice_pdf_url ?? DEFAULT_PDF_URL,
     why: typeof contract.why === 'string' ? contract.why : null,
     trigger_station: triggerStation,
+    pending_status: null,
     coverage_reduced: coverageReduced,
   }
 }
@@ -188,6 +312,8 @@ export default function MadridPage() {
   const [episodes, setEpisodes] = useState<EpisodeSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const previousStatusRef = useRef<Status | null>(null)
+  const [showRecoveryToast, setShowRecoveryToast] = useState(false)
 
   useEffect(() => {
     void fetchStatus()
@@ -208,7 +334,7 @@ export default function MadridPage() {
       await fetchEpisodes()
     } catch (err) {
       console.error('Failed to load demo:', err)
-      setError(err instanceof Error ? err.message : 'Error al cargar demo')
+      setError(ERROR_MESSAGE)
     } finally {
       setLoading(false)
     }
@@ -238,7 +364,7 @@ export default function MadridPage() {
       setStatusContract(null)
     } catch (err) {
       console.error('Failed to fetch status:', err)
-      setError(err instanceof Error ? err.message : 'Error desconocido')
+      setError(ERROR_MESSAGE)
       await fetchStatusContract()
     } finally {
       setLoading(false)
@@ -299,14 +425,89 @@ export default function MadridPage() {
   const isStale = (statusForView?.data_age_minutes ?? 0) > STALE_THRESHOLD_MINUTES
   const coverageReduced = statusForView?.coverage_reduced ?? (statusForView ? statusForView.stations.filter((station) => Number.isFinite(station.value)).length < 2 : false)
 
-  const triggerValue = statusForView ? findTriggerValue(statusForView) : null
-  const triggerTime = safeFormatDateTime(statusForView?.trigger_station?.ts_utc ?? statusForView?.as_of_utc ?? null)
-
   const max1hValue = statusForView?.max_1h?.value
   const max1hStation = statusForView?.max_1h?.station_name ?? statusForView?.trigger_station?.name ?? 'Sin datos'
   const max1hTime = safeFormatDateTime(statusForView?.max_1h?.timestamp_utc ?? statusForView?.as_of_utc ?? null)
-
   const episodeStartTime = safeFormatDateTime(statusForView?.episode_start ?? null)
+  const noticeContent = statusForView ? buildNoticeContent(statusForView) : null
+  const asOfTime = safeFormatDateTime(statusForView?.as_of_utc ?? null)
+  const asOfLocal = asOfTime?.local ?? 'Sin datos'
+  const asOfUtc = asOfTime?.utc ?? 'N/D'
+  const dataAgeValue = statusForView?.data_age_minutes
+  const dataAgeIsFinite = typeof dataAgeValue === 'number' && Number.isFinite(dataAgeValue)
+  const dataAgeLabel = dataAgeIsFinite ? `${dataAgeValue} min` : 'Sin datos'
+  const statusLabel = statusForView ? STATUS_LABELS[statusForView.status] : 'Sin datos'
+  const statusBadgeClass = isExceeded ? 'gov-badge gov-badge--warn' : 'gov-badge gov-badge--ok'
+  const statusIcon = isExceeded ? <AlertTriangleIcon className="gov-icon" /> : <CheckCircleIcon className="gov-icon" />
+  const triggerStationName = statusForView?.trigger_station?.name ?? statusForView?.max_1h?.station_name ?? 'Sin datos'
+  const triggerValue = statusForView ? findTriggerValue(statusForView) ?? statusForView.max_1h?.value ?? null : null
+  const triggerDisplayValue = formatConcentration(triggerValue)
+  const triggerTime = safeFormatDateTime(
+    statusForView?.trigger_station?.ts_utc ?? statusForView?.max_1h?.timestamp_utc ?? statusForView?.as_of_utc ?? null
+  )
+  const triggerTimeLocal = triggerTime?.local ?? 'Sin datos'
+  const triggerTimeUtc = triggerTime?.utc ?? 'N/D'
+  const comparisonSymbol = isExceeded ? '≥' : '<'
+  const whySentence = statusForView
+    ? `O₃ ${comparisonSymbol} ${THRESHOLD_UGM3} µg/m³ en ${triggerStationName}, ${triggerDisplayValue} µg/m³ a las ${triggerTimeLocal} (${triggerTimeUtc}).`
+    : 'Sin datos disponibles para explicar el estado actual.'
+  const noticeDuration =
+    noticeContent && noticeContent.duration_hours !== null ? `${noticeContent.duration_hours} horas` : 'En curso'
+  const noticeStartLocal = noticeContent?.episode_start_local
+  const noticeStartUtc = noticeContent?.episode_start_utc
+  const max1hLocal = max1hTime?.local ?? 'Sin datos'
+  const max1hUtc = max1hTime?.utc ?? 'N/D'
+  const max8hLabel = formatConcentration(statusForView?.max_8h)
+  const triggerStationId = statusForView?.trigger_station?.id ?? statusForView?.max_1h?.station_id ?? null
+  const statusJsonHref = STATUS_CONTRACT_ENDPOINT
+  const pendingStatus = statusForView?.pending_status ?? null
+  const showDebounceChip = Boolean(pendingStatus)
+  const pendingChipAria =
+    pendingStatus === 'INFO_EXCEEDED'
+      ? 'Confirmando cambio a umbral de información'
+      : pendingStatus === 'COMPLIANT'
+      ? 'Confirmando retorno a cumplimiento'
+      : undefined
+  const changeLogEntries = changelog.slice(0, 10)
+  const hasStations = (statusForView?.stations?.length ?? 0) > 0
+
+  const episodesByTrigger = useMemo(() => {
+    return episodes.reduce<Record<string, EpisodeSummary>>((acc, episode) => {
+      if (episode.trigger_station?.ts_utc) {
+        acc[episode.trigger_station.ts_utc] = episode
+      }
+      acc[episode.as_of_utc] = episode
+      return acc
+    }, {})
+  }, [episodes])
+
+  useEffect(() => {
+    if (!statusForView) {
+      previousStatusRef.current = null
+      setShowRecoveryToast(false)
+      return
+    }
+
+    if (statusForView.status !== 'COMPLIANT') {
+      setShowRecoveryToast(false)
+    }
+
+    let timeoutId: number | undefined
+    if (previousStatusRef.current === 'INFO_EXCEEDED' && statusForView.status === 'COMPLIANT') {
+      setShowRecoveryToast(true)
+      timeoutId = window.setTimeout(() => {
+        setShowRecoveryToast(false)
+      }, 4000)
+    }
+
+    previousStatusRef.current = statusForView.status
+
+    return () => {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId)
+      }
+    }
+  }, [statusForView])
 
   const copyNoticeHTML = () => {
     if (!statusForView) {
@@ -316,20 +517,21 @@ export default function MadridPage() {
     try {
       const notice = buildNoticeContent(statusForView)
       const inicioHtml = notice.episode_start_local
-        ? `
-  <p><strong>Inicio:</strong> ${notice.episode_start_local} (${notice.episode_start_utc})</p>
-  <p><strong>Duración:</strong> ${notice.duration_hours !== null ? `${notice.duration_hours} horas` : 'En curso'}</p>`
+        ? `<p><strong>Inicio y duración:</strong> ${notice.episode_start_local} (${notice.episode_start_utc}) • ${
+            notice.duration_hours !== null ? `${notice.duration_hours} horas` : 'En curso'
+          }</p>`
         : ''
 
       const noticeHTML = `
 <div>
   <h2>Umbral de Información O₃</h2>
   <p><strong>Área:</strong> ${notice.area}</p>
-  <p><strong>Tipo:</strong> ${notice.type}</p>${inicioHtml}
-  <p><strong>Valor máx 1 h:</strong> ${formatConcentration(notice.max_1h_value)} µg/m³ en ${notice.max_1h_station}, ${notice.max_1h_local} (${notice.max_1h_utc})</p>
-  <p><strong>Media máx 8 h:</strong> ${formatConcentration(notice.max_8h)} µg/m³</p>
+  <p><strong>Tipo:</strong> ${notice.type}</p>
+  ${inicioHtml}
+  <p><strong>Valor máximo 1 h:</strong> ${notice.max_1h_value.toFixed(1)} µg/m³ · ${notice.max_1h_station} · ${notice.max_1h_local} (${notice.max_1h_utc})</p>
+  <p><strong>Media máxima 8 h:</strong> ${notice.max_8h.toFixed(1)} µg/m³</p>
   <p><strong>Pronóstico breve:</strong> ${notice.forecast}</p>
-  <p style="font-size: 0.85em; color: #666; margin-top: 1em;">Fuente: EEA (European Environment Agency)</p>
+  <p style="font-size: 0.85em; color: #444; margin-top: 1em;">Este formato automatiza el contenido exigido. Unidades: µg/m³.</p>
 </div>`.trim()
 
       void navigator.clipboard.writeText(noticeHTML)
@@ -342,426 +544,354 @@ export default function MadridPage() {
 
   if (loading && !statusForView) {
     return (
-      <main style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
-        <p>Cargando...</p>
+      <main id="contenido-principal">
+        <div className="gov-container gov-stack">
+          <header className="gov-status-header">
+            <div className="gov-skeleton" style={{ width: '320px', height: '48px' }} />
+            <div className="gov-status-meta">
+              <span className="gov-skeleton" style={{ width: '200px', height: '18px' }} />
+              <span className="gov-skeleton" style={{ width: '140px', height: '24px' }} />
+            </div>
+          </header>
+          <section className="gov-card">
+            <div className="gov-skeleton" style={{ width: '100%', height: '18px' }} />
+            <div className="gov-skeleton" style={{ width: '80%', height: '18px', marginTop: '8px' }} />
+          </section>
+          <section className="gov-card">
+            <div className="gov-skeleton" style={{ width: '100%', height: '180px' }} />
+          </section>
+          <section>
+            <div className="gov-skeleton" style={{ width: '220px', height: '24px' }} />
+            {[...Array(5)].map((_, index) => (
+              <div
+                key={index}
+                className="gov-skeleton"
+                style={{ width: '100%', height: '32px', marginTop: '12px' }}
+              />
+            ))}
+          </section>
+        </div>
       </main>
     )
   }
 
   if ((error || !statusForView) && !statusContract) {
     return (
-      <main style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
-        <h1>Estado de Madrid O₃</h1>
-        <p style={{ color: 'red' }}>Error: {error || 'No hay datos disponibles'}</p>
-        <p>
-          Puede intentar ejecutar <code>{INGEST_ENDPOINT}</code> para forzar una actualización.
-        </p>
+      <main id="contenido-principal">
+        <div className="gov-container gov-stack">
+          <h1 className="gov-section-heading">Estado de Madrid O₃</h1>
+          <div className="gov-alert gov-alert--error" role="alert">
+            <strong>Error:</strong> {error || 'No hay datos disponibles'}
+          </div>
+          <p className="gov-body">
+            Puede intentar ejecutar <code>{INGEST_ENDPOINT}</code> para forzar una actualización.
+          </p>
+        </div>
       </main>
     )
   }
 
   return (
-    <main style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
-      <h1>Estado de Madrid O₃</h1>
-
-      <div
-        style={{
-          marginTop: '1rem',
-          marginBottom: '1.5rem',
-          padding: '1rem',
-          backgroundColor: '#e7f5ff',
-          borderRadius: '8px',
-          border: '2px solid #339af0',
-        }}
-      >
-        <div style={{ fontWeight: 'bold', marginBottom: '0.5rem', color: '#1864ab' }}>🎭 Modo Demo</div>
-        <p style={{ fontSize: '0.9em', marginBottom: '0.75rem', color: '#495057' }}>
-          Cargar ejemplos de datos para ver cómo se ve la aplicación en diferentes estados:
-        </p>
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => void loadDemo('exceeded')}
-            disabled={loading}
-            style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: '#ff6b6b',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontWeight: 'bold',
-              opacity: loading ? 0.6 : 1,
-            }}
-            type="button"
-          >
-            Demo: Umbral Excedido
-          </button>
-          <button
-            onClick={() => void loadDemo('compliant')}
-            disabled={loading}
-            style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: '#51cf66',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              fontWeight: 'bold',
-              opacity: loading ? 0.6 : 1,
-            }}
-            type="button"
-          >
-            Demo: Cumplimiento
-          </button>
-        </div>
-      </div>
-
-      {statusForView && (
-        <p style={{ marginTop: '0.5rem', color: '#555' }}>
-          Última hora completa:{' '}
-          {safeFormatDateTime(statusForView.as_of_utc)?.local || 'Sin datos'}{' '}
-          <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.5rem' }}>
-            ({safeFormatDateTime(statusForView.as_of_utc)?.utc || 'N/D'})
-          </span>
-        </p>
-      )}
-
-      <div
-        style={{
-          marginTop: '2rem',
-          padding: '1rem',
-          backgroundColor: isExceeded ? '#ff6b6b' : '#51cf66',
-          color: 'white',
-          borderRadius: '8px',
-          textAlign: 'center',
-          fontSize: '1.5rem',
-          fontWeight: 'bold',
-        }}
-      >
-        {isExceeded ? 'UMBRAL EXCEDIDO' : 'CUMPLIMIENTO'}
-      </div>
-
+    <main id="contenido-principal">
       {isStale && (
-        <div
-          style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            backgroundColor: '#ffd43b',
-            borderRadius: '8px',
-            border: '2px solid #ffc107',
-          }}
-        >
-          <strong>⚠️ Datos con {statusForView?.data_age_minutes ?? 'N/D'} min de retraso;</strong> el estado está congelado hasta recibir
-          datos recientes.
+        <div className="gov-banner gov-banner--stale" role="status">
+          <ClockIcon className="gov-icon" />
+          <span>Datos retrasados (&gt;90 min). Estado congelado.</span>
         </div>
       )}
-
-      {error && statusForView && (
-        <div
-          style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            backgroundColor: '#ffe3e3',
-            borderRadius: '8px',
-            border: '2px solid #ff8787',
-          }}
-        >
-          <strong>⚠️ Incidencia de ingestión:</strong> {error}
-        </div>
-      )}
-
       {coverageReduced && (
-        <div
-          style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            backgroundColor: '#ffd43b',
-            borderRadius: '8px',
-            border: '2px solid #ffc107',
-          }}
-        >
-          <strong>⚠️ Cobertura reducida:</strong> Menos de 2 estaciones activas en la última hora. El estado se mantiene hasta
-          recuperar cobertura.
+        <div className="gov-banner gov-banner--coverage" role="status">
+          <AlertTriangleIcon className="gov-icon" />
+          <span>Cobertura reducida: menos de 2 estaciones. Estado congelado.</span>
         </div>
       )}
 
-      <section style={{ marginTop: '2rem' }}>
-        <h2>Por qué</h2>
-        {isExceeded && statusForView?.trigger_station ? (
-          <div style={{ padding: '1rem', backgroundColor: '#fff3cd', borderRadius: '8px' }}>
-            <p>
-              <strong>Estado activado por:</strong>
-            </p>
-            <ul style={{ marginTop: '0.5rem', paddingLeft: '1.5rem' }}>
-              <li>
-                <strong>Estación:</strong> {statusForView.trigger_station.name}
-              </li>
-              <li>
-                <strong>Valor:</strong> {formatConcentration(triggerValue)} µg/m³
-              </li>
-              <li>
-                <strong>Hora:</strong>{' '}
-                {triggerTime?.local || 'Sin datos'}{' '}
-                <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.5rem' }}>
-                  ({triggerTime?.utc || 'N/D'})
-                </span>
-              </li>
-            </ul>
-          </div>
-        ) : (
-          <p>
-            Según la Directiva (UE) 2024/2881, Anexo I Sección 4, el umbral de información para O₃ es de 180 µg/m³ (media de 1
-            hora). Cuando se supera este umbral en cualquier estación representativa de la Aglomeración de Madrid, se debe
-            informar al público.
-          </p>
-        )}
-      </section>
+      <div className="gov-container gov-stack">
+        <h1 className="visually-hidden">Estado de Madrid O₃</h1>
 
-      <section style={{ marginTop: '2rem', padding: '1.5rem', border: '2px solid #333', borderRadius: '8px' }}>
-        <h2>Aviso (Estilo Anexo)</h2>
-
-        <div style={{ marginTop: '1rem' }}>
-          <p>
-            <strong>Área:</strong> Aglomeración de Madrid
-          </p>
-          <p>
-            <strong>Tipo:</strong> Umbral de información O₃ (180 µg/m³, 1 h)
-          </p>
-
-          {statusForView?.episode_start && episodeStartTime && (
-            <>
-              <p>
-                <strong>Inicio:</strong> {episodeStartTime.local}{' '}
-                <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.5rem' }}>({episodeStartTime.utc})</span>
-              </p>
-              <p>
-                <strong>Duración:</strong> {statusForView.duration_hours !== null ? `${statusForView.duration_hours} horas` : 'En curso'}
-              </p>
-            </>
-          )}
-
-          <p>
-            <strong>Valor máx 1 h:</strong>{' '}
-            <span style={{ fontWeight: 'bold' }}>{formatConcentration(max1hValue)} µg/m³</span> en {max1hStation},{' '}
-            {max1hTime?.local || 'Sin datos'}
-            <span style={{ fontSize: '0.85em', color: '#666', marginLeft: '0.5rem' }}>
-              ({max1hTime?.utc || 'N/D'})
+        <header className="gov-status-header">
+          <div className="gov-status-line">
+            <span className={statusBadgeClass}>
+              {statusIcon}
+              <span>{statusLabel}</span>
             </span>
-          </p>
-          <p>
-            <strong>Media máx 8 h:</strong>{' '}
-            <span style={{ fontWeight: 'bold' }}>{formatConcentration(statusForView?.max_8h)} µg/m³</span>
-          </p>
-          <p>
-            <strong>Pronóstico breve:</strong> Se recomienda consultar las fuentes oficiales para información actualizada.
-          </p>
-        </div>
+            {showDebounceChip && (
+              <span
+                className="gov-chip gov-chip--accent"
+                aria-live="polite"
+                aria-label={pendingChipAria ?? undefined}
+              >
+                confirmando…
+              </span>
+            )}
+          </div>
+          <div className="gov-status-meta">
+            <p className="gov-status-meta__text">
+              Actualizado a las {asOfLocal} <span className="gov-status-meta__utc">({asOfUtc})</span>
+            </p>
+            <span className="gov-chip" aria-label="Edad de los datos">
+              <ClockIcon className="gov-icon gov-icon--inline" />
+              Edad de datos: {dataAgeLabel}
+            </span>
+          </div>
+        </header>
 
-        <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          <button
-            onClick={copyNoticeHTML}
-            style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: '#339af0',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-            type="button"
-          >
-            Copiar HTML
-          </button>
-          <a
-            href={pdfUrl}
-            download
-            style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: '#51cf66',
-              color: 'white',
-              textDecoration: 'none',
-              borderRadius: '4px',
-              display: 'inline-block',
-            }}
-          >
-            Descargar PDF
-          </a>
-          <a
-            href={STATUS_CONTRACT_ENDPOINT}
-            style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: '#845ef7',
-              color: 'white',
-              textDecoration: 'none',
-              borderRadius: '4px',
-              display: 'inline-block',
-            }}
-          >
-            Ver status.json
-          </a>
-        </div>
-      </section>
+        {error && (
+          <div className="gov-alert gov-alert--error" role="alert">
+            {error}
+          </div>
+        )}
 
-      <section style={{ marginTop: '2rem' }}>
-        <h2>Tabla de Estaciones</h2>
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1rem' }}>
-          <thead>
-            <tr style={{ backgroundColor: '#f1f3f5' }}>
-              <th style={{ padding: '0.75rem', textAlign: 'left', border: '1px solid #ddd' }}>ID</th>
-              <th style={{ padding: '0.75rem', textAlign: 'left', border: '1px solid #ddd' }}>Nombre</th>
-              <th style={{ padding: '0.75rem', textAlign: 'right', border: '1px solid #ddd' }}>Valor (µg/m³)</th>
-              <th style={{ padding: '0.75rem', textAlign: 'left', border: '1px solid #ddd' }}>Hora</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(statusForView?.stations || []).map((station) => {
-              const stationTime = safeFormatDateTime(station.timestamp_utc)
-              const exceeded = Number.isFinite(station.value) && station.value >= 180
-              return (
-                <tr key={station.id} style={{ backgroundColor: exceeded ? '#ffe0e0' : 'white' }}>
-                  <td style={{ padding: '0.75rem', border: '1px solid #ddd' }}>{station.id}</td>
-                  <td style={{ padding: '0.75rem', border: '1px solid #ddd' }}>{station.name}</td>
-                  <td
-                    style={{
-                      padding: '0.75rem',
-                      textAlign: 'right',
-                      border: '1px solid #ddd',
-                      fontWeight: exceeded ? 'bold' : 'normal',
-                      fontVariantNumeric: 'tabular-nums',
-                    }}
-                  >
-                    {formatConcentration(station.value)}
-                  </td>
-                  <td style={{ padding: '0.75rem', border: '1px solid #ddd' }}>
-                    {stationTime?.local || 'Sin datos'}
-                    <br />
-                    <span style={{ fontSize: '0.85em', color: '#666' }}>{stationTime?.utc || 'N/D'}</span>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </section>
-
-      {changelog.length > 0 && (
-        <section style={{ marginTop: '2rem' }}>
-          <h2>Registro de Cambios</h2>
-          <div style={{ marginTop: '1rem' }}>
-            {changelog.slice(0, 10).map((entry, index) => {
-              const changeTime = safeFormatDateTime(entry.timestamp)
-              const hourTime = safeFormatDateTime(entry.hour_utc ?? null)
-              return (
-                <div
-                  key={`${entry.timestamp}-${entry.to_status}-${index}`}
-                  style={{ padding: '0.75rem', marginBottom: '0.5rem', backgroundColor: '#f8f9fa', borderRadius: '4px' }}
-                >
-                  <div>
-                    <strong>{changeTime?.local || 'Sin datos'}</strong>{' '}
-                    <span style={{ fontSize: '0.85em', color: '#666' }}>({changeTime?.utc || 'N/D'})</span>
-                  </div>
-                  <div>
-                    {entry.from_status} → {entry.to_status}
-                  </div>
-                  <div style={{ fontSize: '0.9em', marginTop: '0.25rem' }}>
-                    {entry.station_name ? (
-                      <>
-                        Estación: {entry.station_name}
-                        {entry.value !== undefined && ` (${formatConcentration(entry.value)} µg/m³)`}
-                      </>
-                    ) : (
-                      'Sin estación asociada'
-                    )}
-                    {hourTime && (
-                      <>
-                        {' '}
-                        - Hora: {hourTime.local}{' '}
-                        <span style={{ fontSize: '0.85em', color: '#666' }}>({hourTime.utc})</span>
-                      </>
-                    )}
-                    {entry.data_age_minutes_at_flip !== undefined && (
-                      <> - Edad de datos: {entry.data_age_minutes_at_flip} min</>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+        <section className="gov-card gov-why-panel" aria-labelledby="panel-why">
+          <div className="gov-card__field">
+            <span className="gov-card__label" id="panel-why">
+              Motivo
+            </span>
+            <p className="gov-body">{whySentence}</p>
+          </div>
+          <div className="gov-legal">
+            <span>{`Umbral legal: ${THRESHOLD_UGM3} µg/m³ (1 h)`}</span>
+            <span aria-hidden="true">•</span>
+            <Link href="/madrid/methodology">Metodología</Link>
           </div>
         </section>
-      )}
 
-      {episodes.length > 0 && (
-        <section style={{ marginTop: '2rem' }}>
-          <h2>Episodios anteriores</h2>
-          <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {episodes.map((episode) => {
-              const triggerTime = safeFormatDateTime(episode.trigger_station?.ts_utc ?? episode.as_of_utc ?? null)
-              return (
-                <div
-                  key={episode.id}
-                  style={{
-                    padding: '0.75rem',
-                    borderRadius: '6px',
-                    border: '1px solid #dee2e6',
-                    backgroundColor: '#f8f9fa',
-                  }}
-                >
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
-                    <strong>{episode.as_of_local}</strong>
-                    <span style={{ fontSize: '0.85em', color: '#666' }}>({safeFormatDateTime(episode.as_of_utc)?.utc || 'UTC'})</span>
-                  </div>
-                  <div style={{ marginTop: '0.25rem' }}>
-                    {episode.trigger_station ? (
-                      <>
-                        Disparo en {episode.trigger_station.name}
-                        {episode.o3_max_1h_ugm3 !== null && (
-                          <> — {formatConcentration(episode.o3_max_1h_ugm3)} µg/m³</>
-                        )}
-                        {triggerTime && (
-                          <>
-                            {' '}a las {triggerTime.local}{' '}
-                            <span style={{ fontSize: '0.85em', color: '#666' }}>({triggerTime.utc})</span>
-                          </>
-                        )}
-                      </>
-                    ) : (
-                      'Sin detalles del disparo.'
+        <section className="gov-card" aria-labelledby="notice-heading">
+          <div>
+            <h2 id="notice-heading" className="gov-section-heading">
+              Aviso (estilo anexo)
+            </h2>
+          </div>
+          <div className="gov-card__grid">
+            <div className="gov-card__field">
+              <span className="gov-card__label">Área</span>
+              <span className="gov-card__value">{noticeContent?.area ?? 'Aglomeración de Madrid'}</span>
+            </div>
+            <div className="gov-card__field">
+              <span className="gov-card__label">Tipo</span>
+              <span className="gov-card__value">Umbral de información O₃ (180 µg/m³, 1 h)</span>
+            </div>
+            <div className="gov-card__field">
+              <span className="gov-card__label">Inicio y duración</span>
+              <span className="gov-card__value">
+                {noticeStartLocal ? `${noticeStartLocal} (${noticeStartUtc}) • ${noticeDuration}` : 'Sin episodio en curso'}
+              </span>
+            </div>
+            <div className="gov-card__field">
+              <span className="gov-card__label">Valor máximo 1 h</span>
+              <span className="gov-card__value">
+                <strong>{formatConcentration(max1hValue)} µg/m³</strong> · {max1hStation} · {max1hLocal} ({max1hUtc})
+              </span>
+            </div>
+            <div className="gov-card__field">
+              <span className="gov-card__label">Media máxima 8 h</span>
+              <span className="gov-card__value">
+                <strong>{max8hLabel} µg/m³</strong>
+              </span>
+            </div>
+            <div className="gov-card__field">
+              <span className="gov-card__label">Pronóstico breve</span>
+              <span className="gov-card__value">
+                {noticeContent?.forecast ??
+                  'Se recomienda consultar las fuentes oficiales para información actualizada.'}
+              </span>
+            </div>
+          </div>
+          <div className="gov-actions">
+            <button className="gov-button" onClick={copyNoticeHTML} type="button">
+              <CopyIcon className="gov-icon gov-icon--inline" />
+              Copiar HTML
+            </button>
+            <a className="gov-button gov-button--quiet" href={pdfUrl} target="_blank" rel="noopener noreferrer">
+              <FilePdfIcon className="gov-icon gov-icon--inline" />
+              Descargar PDF
+            </a>
+          </div>
+          <p className="gov-footnote">Este formato automatiza el contenido exigido. Unidades: µg/m³.</p>
+        </section>
+
+        <section>
+          <h2 className="gov-section-heading">Tabla de estaciones</h2>
+          {hasStations ? (
+            <div className="gov-table-wrapper">
+              <table className="gov-table">
+                <caption className="visually-hidden">Valores horarios de estaciones representativas</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">ID</th>
+                    <th scope="col">Estación</th>
+                    <th scope="col" className="gov-table__numeric">
+                      Valor (µg/m³)
+                    </th>
+                    <th scope="col">Hora local</th>
+                    <th scope="col">Hora UTC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(statusForView?.stations || []).map((station) => {
+                    const stationTime = safeFormatDateTime(station.timestamp_utc)
+                    const isTriggerRow = triggerStationId ? station.id === triggerStationId : false
+                    const rowClassName = isTriggerRow ? 'gov-table__trigger' : undefined
+                    return (
+                      <tr key={station.id} className={rowClassName} tabIndex={0}>
+                        <td>{station.id}</td>
+                        <td>{station.name}</td>
+                        <td className="gov-table__numeric">{formatConcentration(station.value)}</td>
+                        <td>{stationTime?.local || 'Sin datos'}</td>
+                        <td>{stationTime?.utc || 'N/D'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="gov-body" role="status">
+              Sin datos de la última hora. Consulte la metodología.
+            </p>
+          )}
+        </section>
+
+        {changeLogEntries.length > 0 && (
+          <section>
+            <h2 className="gov-section-heading">Registro de cambios</h2>
+            <ol className="gov-timeline">
+              {changeLogEntries.map((entry, index) => {
+                const changeTime = safeFormatDateTime(entry.timestamp)
+                const hourTime = safeFormatDateTime(entry.hour_utc ?? null)
+                const matchingEpisode =
+                  (entry.hour_utc && episodesByTrigger[entry.hour_utc]) ||
+                  (entry.to_status === 'INFO_EXCEEDED' && episodesByTrigger[entry.timestamp])
+                const valueLabel =
+                  typeof entry.value === 'number' && Number.isFinite(entry.value)
+                    ? `${formatConcentration(entry.value)} µg/m³`
+                    : null
+                return (
+                  <li key={`${entry.timestamp}-${index}`} className="gov-timeline__item">
+                    <p className="gov-timeline__time">
+                      {changeTime?.local || 'Sin datos'}{' '}
+                      <span className="gov-muted">({changeTime?.utc || 'N/D'})</span>
+                    </p>
+                    <p className="gov-timeline__summary">
+                      {entry.from_status} → {entry.to_status}
+                    </p>
+                    <p className="gov-timeline__detail">
+                      {entry.station_name
+                        ? `${entry.to_status === 'INFO_EXCEEDED' ? 'por' : 'en'} ${entry.station_name}${
+                            valueLabel ? ` ${valueLabel}` : ''
+                          }`
+                        : 'Sin estación asociada'}
+                      {hourTime ? ` · Hora: ${hourTime.local} (${hourTime.utc})` : ''}
+                      {entry.data_age_minutes_at_flip !== undefined ? ` · Edad ${entry.data_age_minutes_at_flip} min` : ''}
+                    </p>
+                    {matchingEpisode && (
+                      <a className="gov-link" href={matchingEpisode.pdf_url} target="_blank" rel="noopener noreferrer">
+                        <FilePdfIcon className="gov-icon gov-icon--inline" />
+                        PDF congelado
+                      </a>
                     )}
-                  </div>
-                  <a
-                    href={episode.pdf_url}
-                    style={{
-                      marginTop: '0.5rem',
-                      display: 'inline-block',
-                      color: '#1864ab',
-                      textDecoration: 'underline',
-                    }}
-                  >
-                    Abrir PDF congelado
-                  </a>
-                </div>
-              )
-            })}
+                  </li>
+                )
+              })}
+            </ol>
+          </section>
+        )}
+
+        {episodes.length > 0 && (
+          <section>
+            <h2 className="gov-section-heading">Episodios recientes</h2>
+            <div className="gov-episode-list">
+              {episodes.map((episode) => {
+                const triggerTime = safeFormatDateTime(episode.trigger_station?.ts_utc ?? episode.as_of_utc ?? null)
+                const episodeValue =
+                  typeof episode.o3_max_1h_ugm3 === 'number' && Number.isFinite(episode.o3_max_1h_ugm3)
+                    ? `${formatConcentration(episode.o3_max_1h_ugm3)} µg/m³`
+                    : 'Sin datos'
+                return (
+                  <article key={episode.id} className="gov-card gov-card--subtle">
+                    <div className="gov-card__field">
+                      <span className="gov-card__label">Estado</span>
+                      <span className="gov-card__value">{episode.status}</span>
+                    </div>
+                    <div className="gov-card__field">
+                      <span className="gov-card__label">Disparo</span>
+                      <span className="gov-card__value">
+                        {episode.trigger_station ? episode.trigger_station.name : 'Sin estación'}
+                        {triggerTime ? ` · ${triggerTime.local} (${triggerTime.utc})` : ''}
+                      </span>
+                    </div>
+                    <div className="gov-card__field">
+                      <span className="gov-card__label">Valor máximo</span>
+                      <span className="gov-card__value">{episodeValue}</span>
+                    </div>
+                    <a href={episode.pdf_url} className="gov-link" target="_blank" rel="noopener noreferrer">
+                      <FilePdfIcon className="gov-icon gov-icon--inline" />
+                      Abrir PDF congelado
+                    </a>
+                  </article>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        <section className="gov-card gov-methodology" aria-labelledby="methodology-heading">
+          <div className="gov-methodology__header">
+            <InfoIcon className="gov-icon" />
+            <div>
+              <h2 id="methodology-heading" className="gov-section-heading">
+                Metodología y descargo
+              </h2>
+              <p className="gov-legal">Vista previa no oficial basada en datos públicos.</p>
+            </div>
+          </div>
+          <p className="gov-body">
+            Los datos provienen de la Agencia Europea de Medio Ambiente (EEA). El PDF refleja los mismos valores que esta
+            vista web para auditorías y archivo.
+          </p>
+          <div className="gov-actions">
+            <Link href="/madrid/methodology" className="gov-button gov-button--quiet">
+              <InfoIcon className="gov-icon gov-icon--inline" />
+              Metodología
+            </Link>
+            <a href={statusJsonHref} className="gov-button gov-button--quiet">
+              Ver status.json
+            </a>
           </div>
         </section>
-      )}
 
-      <section
-        style={{
-          marginTop: '2rem',
-          padding: '1rem',
-          backgroundColor: '#fff3cd',
-          borderRadius: '8px',
-          fontSize: '0.9rem',
-        }}
-      >
-        <strong>Descargo de responsabilidad:</strong> Esta es una vista previa no oficial. Los datos provienen de la EEA
-        (European Environment Agency). Para información oficial, consulte las fuentes autorizadas.
-      </section>
-
-      <div style={{ marginTop: '2rem' }}>
-        <Link href="/madrid/methodology">Ver metodología</Link>
+        <section className="gov-card gov-card--subtle">
+          <h2 className="gov-section-heading">Modo demo</h2>
+          <p className="gov-body">
+            Use ejemplos para evaluar la experiencia sin esperar datos en vivo. Cambiar de estado tarda unos segundos.
+          </p>
+          <div className="gov-actions">
+            <button
+              onClick={() => void loadDemo('exceeded')}
+              disabled={loading}
+              className="gov-button gov-button--quiet"
+              type="button"
+            >
+              Demo: Umbral superado
+            </button>
+            <button
+              onClick={() => void loadDemo('compliant')}
+              disabled={loading}
+              className="gov-button gov-button--quiet"
+              type="button"
+            >
+              Demo: Cumplimiento
+            </button>
+          </div>
+        </section>
       </div>
+
+      {showRecoveryToast && (
+        <div className="gov-toast" role="status" aria-live="polite">
+          <CheckCircleIcon className="gov-icon" />
+          Restablecido: &lt;180 µg/m³ durante 2 horas
+        </div>
+      )}
     </main>
   )
 }

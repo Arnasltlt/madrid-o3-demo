@@ -35,6 +35,7 @@ export interface StatusResponse {
   notice_pdf_url: string
   why: string | null
   trigger_station: TriggerStation | null
+  pending_status: Status | null
   coverage_reduced: boolean
 }
 
@@ -58,6 +59,7 @@ export interface StatusState {
   consecutive_exceeded: number
   consecutive_compliant: number
   data_age_minutes: number
+  pending_status: Status | null
   trigger?: TriggerStation
 }
 

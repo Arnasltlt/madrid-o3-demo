@@ -103,6 +103,7 @@ export function computeStatus(
       consecutive_exceeded: 0,
       consecutive_compliant: 0,
       data_age_minutes: 999,
+      pending_status: null,
     }
   }
 
@@ -126,6 +127,7 @@ export function computeStatus(
       ...currentState,
       data_age_minutes: dataAgeMinutes,
       last_check_timestamp: formatISOUTC(new Date()),
+      pending_status: currentState.pending_status ?? null,
     }
   }
   
@@ -141,6 +143,7 @@ export function computeStatus(
     consecutive_exceeded: 0,
     consecutive_compliant: 0,
     data_age_minutes: effectiveDataAge,
+    pending_status: null,
   }
 
   // Update consecutive counts
@@ -151,8 +154,17 @@ export function computeStatus(
   let newStatus: Status = state.current_status
   let episodeStart = state.episode_start
   let trigger: TriggerStation | undefined = state.trigger
+  let pendingStatus: Status | null = null
 
   if (exceeded) {
+    if (
+      !bypassDebounce &&
+      state.current_status !== 'INFO_EXCEEDED' &&
+      newConsecutiveExceeded > 0 &&
+      newConsecutiveExceeded < DEBOUNCE_COUNT
+    ) {
+      pendingStatus = 'INFO_EXCEEDED'
+    }
     // Need 2 consecutive exceeds to flip to INFO_EXCEEDED (unless bypassed)
     if (bypassDebounce || newConsecutiveExceeded >= DEBOUNCE_COUNT) {
       if (bypassDebounce) {
@@ -178,6 +190,14 @@ export function computeStatus(
       }
     }
   } else {
+    if (
+      !bypassDebounce &&
+      state.current_status === 'INFO_EXCEEDED' &&
+      newConsecutiveCompliant > 0 &&
+      newConsecutiveCompliant < DEBOUNCE_COUNT
+    ) {
+      pendingStatus = 'COMPLIANT'
+    }
     // Need 2 consecutive compliant hours to recover (unless bypassed)
     if (bypassDebounce || newConsecutiveCompliant >= DEBOUNCE_COUNT) {
       if (bypassDebounce) {
@@ -200,6 +220,7 @@ export function computeStatus(
     consecutive_exceeded: newConsecutiveExceeded,
     consecutive_compliant: newConsecutiveCompliant,
     data_age_minutes: effectiveDataAge,
+    pending_status: pendingStatus,
     trigger,
   }
 }
@@ -265,6 +286,7 @@ export function buildStatusResponse(
     notice_pdf_url: '/madrid/latest.pdf',
     why: why ?? null,
     trigger_station: state.trigger ?? null,
+    pending_status: state.pending_status ?? null,
     coverage_reduced: coverageReduced,
   }
 }

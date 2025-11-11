@@ -125,6 +125,7 @@ export function initializeState(): void {
       consecutive_exceeded: 0,
       consecutive_compliant: 0,
       data_age_minutes: 0,
+      pending_status: null,
     }
   }
 }
