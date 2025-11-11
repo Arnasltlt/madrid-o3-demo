@@ -1,23 +1,54 @@
 import { NextResponse } from 'next/server'
 import { fetchMadridO3Data, validateDataCoverage, getLatestCompleteHourData } from '@/lib/data/eea'
-import { generateMockHourlyData } from '@/lib/data/mock'
+import { generateMockHourlyData, generateMockExceededData, generateMockRecoveryData } from '@/lib/data/mock'
 import { computeStatus, buildStatusResponse } from '@/lib/status/compute'
-import { getCurrentState, updateState, storeHourlyData, initializeState } from '@/lib/status/store'
+import { getCurrentState, updateState, storeHourlyData, initializeState, addEpisodeSnapshot } from '@/lib/status/store'
 import type { HourlyData } from '@/types/station'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     initializeState()
+
+    const url = new URL(request.url)
+    const syntheticMode = url.searchParams.get('synthetic')
+    const syntheticToken = url.searchParams.get('token')
+    const requiredToken = process.env.SYNTHETIC_MODE_TOKEN
+
+    const isSyntheticRequest = syntheticMode === 'exceed' || syntheticMode === 'recover'
+
+    if (isSyntheticRequest) {
+      if (requiredToken && syntheticToken !== requiredToken) {
+        return NextResponse.json(
+          { error: 'Unauthorized synthetic mode access' },
+          { status: 401 }
+        )
+      }
+
+      if (!requiredToken && process.env.NODE_ENV === 'production') {
+        return NextResponse.json(
+          { error: 'Synthetic mode disabled in production without SYNTHETIC_MODE_TOKEN' },
+          { status: 403 }
+        )
+      }
+    }
 
     // Try to fetch real data, fall back to mock data for testing
     let hourlyData: HourlyData[] = []
     let usingMockData = false
     
-    // Check for force mock flag
-    if (process.env.EEA_FORCE_MOCK === 'true') {
+    if (isSyntheticRequest) {
+      if (syntheticMode === 'exceed') {
+        console.log('Synthetic exceedance requested - using exceeded mock data')
+        hourlyData = generateMockExceededData()
+      } else {
+        console.log('Synthetic recovery requested - using recovery mock data')
+        hourlyData = generateMockRecoveryData()
+      }
+      usingMockData = true
+    } else if (process.env.EEA_FORCE_MOCK === 'true') {
       console.log('EEA_FORCE_MOCK enabled - using mock data')
       hourlyData = generateMockHourlyData(48)
       usingMockData = true
@@ -68,8 +99,13 @@ export async function GET() {
     // Build response
     const statusResponse = buildStatusResponse(newState, hourlyData)
 
+    if (statusResponse.status === 'INFO_EXCEEDED') {
+      addEpisodeSnapshot(statusResponse)
+    }
+
     return NextResponse.json({
       success: true,
+      synthetic_mode: isSyntheticRequest ? syntheticMode : null,
       status: statusResponse.status,
       data_age_minutes: statusResponse.data_age_minutes,
       stations_count: statusResponse.stations.length,

@@ -48,9 +48,11 @@ export default function MethodologyPage() {
         <h2>Lógica de Estado</h2>
         <ul style={{ marginLeft: '2rem' }}>
           <li><strong>Detección:</strong> Si cualquier estación ≥ 180 µg/m³ → INFO_EXCEEDED. Si no, COMPLIANT.</li>
-          <li><strong>Debounce:</strong> Se requieren dos lecturas consecutivas para cambiar el estado.</li>
-          <li><strong>Recuperación:</strong> Dos horas consecutivas &lt; 180 µg/m³ → COMPLIANT.</li>
-          <li><strong>Congelación:</strong> Si los datos tienen más de 90 minutos de antigüedad, el estado se congela.</li>
+          <li><strong>Debounce:</strong> Se requieren dos verificaciones consecutivas por encima del umbral para activar la alerta.</li>
+          <li><strong>Recuperación:</strong> Se necesitan dos verificaciones consecutivas por debajo de 180 µg/m³ para volver a COMPLIANT.</li>
+          <li><strong>Congelación por retraso:</strong> Si los datos superan los 90 minutos de antigüedad, el estado se congela hasta recibir información fresca.</li>
+          <li><strong>Regla de cobertura:</strong> Con menos de dos estaciones activas en la última hora completa no se aplican cambios de estado.</li>
+          <li><strong>Por qué:</strong> Cuando INFO_EXCEEDED está activo se publica la estación, valor y hora que dispararon el aviso.</li>
         </ul>
       </section>
 

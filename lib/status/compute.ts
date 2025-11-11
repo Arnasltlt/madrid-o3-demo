@@ -1,7 +1,7 @@
-import type { Status, StatusState, Station, MaxValue, TriggerStation } from '@/types/status'
+import type { Status, StatusState, Station, MaxValue, TriggerStation, StatusResponse } from '@/types/status'
 import type { HourlyData } from '@/types/station'
 import { getLatestCompleteHourData } from '@/lib/data/eea'
-import { formatISOUTC } from '@/lib/utils/timezone'
+import { formatDateTimeWithUTC, formatISOUTC } from '@/lib/utils/timezone'
 
 const THRESHOLD = 180 // µg/m³
 const STALE_DATA_THRESHOLD_MINUTES = 90
@@ -28,8 +28,9 @@ function findMax1h(stations: Station[]): MaxValue | null {
 
   return {
     value: maxStation.value,
-    station: maxStation.name,
-    timestamp: maxStation.timestamp,
+    station_id: maxStation.id,
+    station_name: maxStation.name,
+    timestamp_utc: maxStation.timestamp_utc,
   }
 }
 
@@ -108,7 +109,7 @@ export function computeStatus(
     id: s.station_id,
     name: s.station_name,
     value: s.value,
-    timestamp: s.timestamp_utc,
+    timestamp_utc: s.timestamp_utc,
   }))
 
   const exceeded = checkThresholdExceeded(stations)
@@ -196,19 +197,7 @@ export function computeStatus(
 export function buildStatusResponse(
   state: StatusState,
   hourlyData: HourlyData[]
-): {
-  status: Status
-  data_age_minutes: number
-  latest_hour_utc: string
-  max_1h: MaxValue
-  max_8h: number
-  episode_start: string | null
-  duration_hours: number | null
-  stations: Station[]
-  why?: string
-  trigger_station?: TriggerStation
-  coverage_reduced?: boolean
-} {
+): StatusResponse {
   const latestData = getLatestCompleteHourData(hourlyData)
   
   if (!latestData || latestData.stations.length === 0) {
@@ -219,7 +208,7 @@ export function buildStatusResponse(
     id: s.station_id,
     name: s.station_name,
     value: s.value,
-    timestamp: s.timestamp_utc,
+    timestamp_utc: s.timestamp_utc,
   }))
 
   const max1h = findMax1h(stations)
@@ -243,20 +232,26 @@ export function buildStatusResponse(
   // Build why string if INFO_EXCEEDED
   let why: string | undefined
   if (state.current_status === 'INFO_EXCEEDED' && state.trigger) {
-    why = `${state.trigger.name}: ${state.trigger.value.toFixed(1)} µg/m³ a las ${latestData.hour_utc}`
+    const triggerTime = formatDateTimeWithUTC(state.trigger.ts_utc || latestData.hour_utc)
+    why = `${state.trigger.name}: ${state.trigger.value.toFixed(1)} µg/m³ a las ${triggerTime.local} (${triggerTime.utc})`
   }
 
+  const dataAgeMinutes = calculateDataAge(latestData.hour_utc)
+
   return {
+    version: '1',
+    zone_code: 'ES0014A',
     status: state.current_status,
-    data_age_minutes: state.data_age_minutes,
-    latest_hour_utc: latestData.hour_utc,
+    data_age_minutes: dataAgeMinutes,
+    as_of_utc: latestData.hour_utc,
     max_1h: max1h,
     max_8h: max8h,
     episode_start: state.episode_start,
     duration_hours: durationHours,
     stations,
-    why,
-    trigger_station: state.trigger,
+    notice_pdf_url: '/madrid/latest.pdf',
+    why: why ?? null,
+    trigger_station: state.trigger ?? null,
     coverage_reduced: coverageReduced,
   }
 }

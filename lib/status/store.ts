@@ -1,4 +1,4 @@
-import type { StatusState, ChangeLogEntry } from '@/types/status'
+import type { StatusState, ChangeLogEntry, StatusResponse } from '@/types/status'
 import { formatISOUTC } from '@/lib/utils/timezone'
 
 // In-memory state storage (for Vercel serverless)
@@ -6,8 +6,14 @@ import { formatISOUTC } from '@/lib/utils/timezone'
 let currentState: StatusState | null = null
 let changeLog: ChangeLogEntry[] = []
 let lastHourlyData: any[] = []
+let episodeSnapshots: { id: string; snapshot: StatusResponse }[] = []
 
-const MAX_CHANGELOG_ENTRIES = 100
+const MAX_CHANGELOG_ENTRIES = 10
+const MAX_EPISODE_SNAPSHOTS = 60
+
+function createEpisodeId(snapshot: StatusResponse): string {
+  return snapshot.as_of_utc.replace(/[:.]/g, '-')
+}
 
 /**
  * Get current status state
@@ -57,6 +63,39 @@ export function updateState(
  */
 export function getChangeLog(): ChangeLogEntry[] {
   return changeLog
+}
+
+/**
+ * Store episode snapshot when INFO_EXCEEDED is triggered
+ */
+export function addEpisodeSnapshot(snapshot: StatusResponse): void {
+  if (snapshot.status !== 'INFO_EXCEEDED') {
+    return
+  }
+
+  const id = createEpisodeId(snapshot)
+  if (episodeSnapshots.some((episode) => episode.id === id)) {
+    return
+  }
+
+  episodeSnapshots.unshift({ id, snapshot })
+  if (episodeSnapshots.length > MAX_EPISODE_SNAPSHOTS) {
+    episodeSnapshots = episodeSnapshots.slice(0, MAX_EPISODE_SNAPSHOTS)
+  }
+}
+
+/**
+ * Retrieve stored episode snapshots
+ */
+export function getEpisodeSnapshots(): { id: string; snapshot: StatusResponse }[] {
+  return episodeSnapshots
+}
+
+/**
+ * Lookup a snapshot by identifier
+ */
+export function findEpisodeSnapshot(id: string): StatusResponse | undefined {
+  return episodeSnapshots.find((episode) => episode.id === id)?.snapshot
 }
 
 /**

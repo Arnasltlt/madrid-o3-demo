@@ -1,8 +1,22 @@
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
+import { PDFDocument, StandardFonts, type PDFPage } from 'pdf-lib'
 import { createHash } from 'crypto'
 import type { StatusResponse } from '@/types/status'
-import { formatMadridDateTime, formatDateTimeWithUTC } from './timezone'
+import { formatDateTimeWithUTC } from './timezone'
 import { buildNoticeContent } from './notice'
+
+const sanitizePdfText = (value: string): string => {
+  return value
+    .replace(/µg\/m³/gi, 'ug/m3')
+    .replace(/µg\/m3/gi, 'ug/m3')
+    .replace(/µ/gi, 'u')
+    .replace(/₃/g, '3')
+}
+
+type DrawTextOptions = Parameters<PDFPage['drawText']>[1]
+
+const drawTextSafe = (targetPage: PDFPage, text: string, options: DrawTextOptions) => {
+  targetPage.drawText(sanitizePdfText(text), options)
+}
 
 export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create()
@@ -16,14 +30,14 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   
   // Generate short identifier from as_of_utc + status + max_1h timestamp
   const snapshotId = createHash('sha1')
-    .update(`${status.latest_hour_utc}${status.status}${status.max_1h.timestamp}`)
+    .update(`${status.as_of_utc}${status.status}${status.max_1h.timestamp_utc}`)
     .digest('hex')
     .substring(0, 8)
   
   let yPos = 800
   
   // Title
-  page.drawText('Umbral de Información O₃', {
+  drawTextSafe(page, 'Umbral de Información O₃', {
     x: 50,
     y: yPos,
     size: 18,
@@ -32,13 +46,13 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   yPos -= 40
   
   // Área
-  page.drawText('Área:', {
+  drawTextSafe(page, 'Área:', {
     x: 50,
     y: yPos,
     size: 12,
     font: fontBold,
   })
-  page.drawText(notice.area, {
+  drawTextSafe(page, notice.area, {
     x: 100,
     y: yPos,
     size: 12,
@@ -47,13 +61,13 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   yPos -= 25
   
   // Tipo
-  page.drawText('Tipo:', {
+  drawTextSafe(page, 'Tipo:', {
     x: 50,
     y: yPos,
     size: 12,
     font: fontBold,
   })
-  page.drawText(notice.type, {
+  drawTextSafe(page, notice.type, {
     x: 100,
     y: yPos,
     size: 12,
@@ -63,13 +77,13 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   
   // Inicio y duración
   if (notice.episode_start_local) {
-    page.drawText('Inicio:', {
+    drawTextSafe(page, 'Inicio:', {
       x: 50,
       y: yPos,
       size: 12,
       font: fontBold,
     })
-    page.drawText(`${notice.episode_start_local} (${notice.episode_start_utc})`, {
+    drawTextSafe(page, `${notice.episode_start_local} (${notice.episode_start_utc})`, {
       x: 100,
       y: yPos,
       size: 12,
@@ -77,7 +91,7 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
     })
     yPos -= 25
     
-    page.drawText('Duración:', {
+    drawTextSafe(page, 'Duración:', {
       x: 50,
       y: yPos,
       size: 12,
@@ -86,7 +100,7 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
     const duracion = notice.duration_hours 
       ? `${notice.duration_hours} horas`
       : 'En curso'
-    page.drawText(duracion, {
+    drawTextSafe(page, duracion, {
       x: 100,
       y: yPos,
       size: 12,
@@ -96,43 +110,43 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   }
   
   // Valor máx 1 h
-  page.drawText('Valor máx 1 h:', {
+  drawTextSafe(page, 'Valor máx 1 h:', {
     x: 50,
     y: yPos,
     size: 12,
     font: fontBold,
   })
-  page.drawText(`${notice.max_1h_value.toFixed(1)} µg/m³ en ${notice.max_1h_station}, ${notice.max_1h_local} (${notice.max_1h_utc})`, {
+  drawTextSafe(page, `${notice.max_1h_value.toFixed(1)} µg/m³ en ${notice.max_1h_station}, ${notice.max_1h_local} (${notice.max_1h_utc})`, {
     x: 100,
     y: yPos,
     size: 12,
-    font: font,
+    font: fontBold,
   })
   yPos -= 25
   
   // Media máx 8 h
-  page.drawText('Media máx 8 h:', {
+  drawTextSafe(page, 'Media máx 8 h:', {
     x: 50,
     y: yPos,
     size: 12,
     font: fontBold,
   })
-  page.drawText(`${notice.max_8h.toFixed(1)} µg/m³`, {
+  drawTextSafe(page, `${notice.max_8h.toFixed(1)} µg/m³`, {
     x: 100,
     y: yPos,
     size: 12,
-    font: font,
+    font: fontBold,
   })
   yPos -= 25
   
   // Pronóstico breve
-  page.drawText('Pronóstico breve:', {
+  drawTextSafe(page, 'Pronóstico breve:', {
     x: 50,
     y: yPos,
     size: 12,
     font: fontBold,
   })
-  page.drawText(notice.forecast, {
+  drawTextSafe(page, notice.forecast, {
     x: 100,
     y: yPos,
     size: 12,
@@ -141,7 +155,7 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   yPos -= 40
   
   // Tabla de estaciones
-  page.drawText('Tabla de estaciones:', {
+  drawTextSafe(page, 'Tabla de estaciones:', {
     x: 50,
     y: yPos,
     size: 12,
@@ -150,25 +164,25 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   yPos -= 25
   
   // Table header
-  page.drawText('ID', {
+  drawTextSafe(page, 'ID', {
     x: 50,
     y: yPos,
     size: 10,
     font: fontBold,
   })
-  page.drawText('Nombre', {
+  drawTextSafe(page, 'Nombre', {
     x: 120,
     y: yPos,
     size: 10,
     font: fontBold,
   })
-  page.drawText('Valor (ug/m3)', {
+  drawTextSafe(page, 'Valor (ug/m3)', {
     x: 350,
     y: yPos,
     size: 10,
     font: fontBold,
   })
-  page.drawText('Hora', {
+  drawTextSafe(page, 'Hora', {
     x: 450,
     y: yPos,
     size: 10,
@@ -184,26 +198,26 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
       yPos = 800
     }
     
-    const horaTime = formatDateTimeWithUTC(station.timestamp)
-    currentPage.drawText(station.id, {
+    const horaTime = formatDateTimeWithUTC(station.timestamp_utc)
+    drawTextSafe(currentPage, station.id, {
       x: 50,
       y: yPos,
       size: 10,
       font: font,
     })
-    currentPage.drawText(station.name.substring(0, 30), {
+    drawTextSafe(currentPage, station.name.substring(0, 30), {
       x: 120,
       y: yPos,
       size: 10,
       font: font,
     })
-    currentPage.drawText(station.value.toFixed(1), {
+    drawTextSafe(currentPage, station.value.toFixed(1), {
       x: 350,
       y: yPos,
       size: 10,
       font: font,
     })
-    currentPage.drawText(horaTime.local.substring(0, 16), {
+    drawTextSafe(currentPage, horaTime.local.substring(0, 16), {
       x: 450,
       y: yPos,
       size: 10,
@@ -216,19 +230,19 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   // Footer with generation time and snapshot ID (on last page)
   const footerY = 50
   const generationTime = formatDateTimeWithUTC(new Date().toISOString())
-  currentPage.drawText('Vista previa no oficial. Unidades: µg/m³', {
+  drawTextSafe(currentPage, 'Vista previa no oficial. Unidades: µg/m³', {
     x: 50,
     y: footerY,
     size: 8,
     font: font,
   })
-  currentPage.drawText(`Generado: ${generationTime.local} (${generationTime.utc})`, {
+  drawTextSafe(currentPage, `Generado: ${generationTime.local} (${generationTime.utc})`, {
     x: 50,
     y: footerY - 12,
     size: 8,
     font: font,
   })
-  currentPage.drawText(`Ventana de datos: ${status.latest_hour_utc} | Estaciones: ${status.stations.length} | ID: ${snapshotId}`, {
+  drawTextSafe(currentPage, `Ventana de datos: ${status.as_of_utc} | Estaciones: ${status.stations.length} | ID: ${snapshotId}`, {
     x: 50,
     y: footerY - 24,
     size: 8,

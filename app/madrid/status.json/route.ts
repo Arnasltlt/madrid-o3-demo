@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getCurrentState, getHourlyData, initializeState } from '@/lib/status/store'
 import { buildStatusResponse } from '@/lib/status/compute'
+import { toStatusJsonContract } from '@/lib/status/contract'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -22,28 +23,7 @@ export async function GET() {
     const statusResponse = buildStatusResponse(currentState, hourlyData)
 
     // Build v1 contract response
-    const response = {
-      version: '1',
-      zone_code: 'ES0014A',
-      as_of_utc: statusResponse.latest_hour_utc,
-      status: statusResponse.status,
-      why: statusResponse.why || null,
-      o3_max_1h_ugm3: statusResponse.max_1h.value,
-      o3_max_8h_ugm3: statusResponse.max_8h,
-      trigger_station: statusResponse.trigger_station ? {
-        id: statusResponse.trigger_station.id,
-        name: statusResponse.trigger_station.name,
-        ts_utc: statusResponse.trigger_station.ts_utc,
-      } : null,
-      data_age_minutes: statusResponse.data_age_minutes,
-      stations: statusResponse.stations.map(s => ({
-        id: s.id,
-        name: s.name,
-        value: s.value,
-        timestamp: s.timestamp,
-      })),
-      notice_pdf_url: '/madrid/latest.pdf',
-    }
+    const response = toStatusJsonContract(statusResponse)
 
     return NextResponse.json(response, {
       headers: {

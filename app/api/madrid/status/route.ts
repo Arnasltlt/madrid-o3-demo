@@ -2,19 +2,60 @@ import { NextResponse } from 'next/server'
 import { getCurrentState, getHourlyData, initializeState, storeHourlyData, updateState } from '@/lib/status/store'
 import { buildStatusResponse, computeStatus } from '@/lib/status/compute'
 import { fetchMadridO3Data, validateDataCoverage, getLatestCompleteHourData } from '@/lib/data/eea'
-import { generateMockHourlyData } from '@/lib/data/mock'
-import type { StatusResponse } from '@/types/status'
+import { generateMockHourlyData, generateMockExceededData, generateMockRecoveryData } from '@/lib/data/mock'
 import type { HourlyData } from '@/types/station'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     initializeState()
 
+    const url = new URL(request.url)
+    const syntheticMode = url.searchParams.get('synthetic')
+    const syntheticToken = url.searchParams.get('token')
+    const requiredToken = process.env.SYNTHETIC_MODE_TOKEN
+    const isSyntheticRequest = syntheticMode === 'exceed' || syntheticMode === 'recover'
+
+    if (isSyntheticRequest) {
+      if (requiredToken && syntheticToken !== requiredToken) {
+        return NextResponse.json(
+          { error: 'Unauthorized synthetic mode access' },
+          { status: 401 }
+        )
+      }
+
+      if (!requiredToken && process.env.NODE_ENV === 'production') {
+        return NextResponse.json(
+          { error: 'Synthetic mode disabled in production without SYNTHETIC_MODE_TOKEN' },
+          { status: 403 }
+        )
+      }
+    }
+
     let currentState = getCurrentState()
     let hourlyData = getHourlyData()
+
+    if (isSyntheticRequest) {
+      const syntheticData = syntheticMode === 'exceed' ? generateMockExceededData() : generateMockRecoveryData()
+      const simulatedState = computeStatus(syntheticData, currentState)
+      const syntheticResponse = buildStatusResponse(simulatedState, syntheticData)
+
+      return NextResponse.json(
+        {
+          ...syntheticResponse,
+          notice_pdf_url: syntheticResponse.notice_pdf_url,
+          synthetic_mode: syntheticMode,
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store, max-age=0',
+          },
+        }
+      )
+    }
 
     // If no data available, auto-trigger ingest
     if (!currentState || hourlyData.length === 0) {
@@ -65,12 +106,7 @@ export async function GET() {
 
     const statusResponse = buildStatusResponse(currentState, hourlyData)
 
-    const response: StatusResponse = {
-      ...statusResponse,
-      pdf_url: '/madrid/latest.pdf',
-    }
-
-    return NextResponse.json(response, {
+    return NextResponse.json(statusResponse, {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store, max-age=0',

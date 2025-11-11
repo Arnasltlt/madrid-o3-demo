@@ -68,4 +68,30 @@ export function generateMockExceededData(): HourlyData[] {
   return data
 }
 
+/**
+ * Generate mock data to simulate recovery below the threshold
+ */
+export function generateMockRecoveryData(): HourlyData[] {
+  const data = generateMockHourlyData(48)
+
+  const latestHour = data[data.length - 1]
+  const previousHour = data[data.length - 2]
+
+  if (previousHour) {
+    previousHour.stations = previousHour.stations.map((station) => ({
+      ...station,
+      value: 160,
+    }))
+  }
+
+  if (latestHour) {
+    latestHour.stations = latestHour.stations.map((station) => ({
+      ...station,
+      value: 150,
+    }))
+  }
+
+  return data
+}
+
 

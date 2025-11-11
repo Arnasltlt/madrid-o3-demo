@@ -1,4 +1,4 @@
-import { format, formatInTimeZone } from 'date-fns-tz'
+import { formatInTimeZone } from 'date-fns-tz'
 
 const MADRID_TIMEZONE = 'Europe/Madrid'
 
@@ -35,7 +35,7 @@ export function formatISOUTC(date: Date): string {
 export function formatDateTimeWithUTC(date: Date | string): { local: string; utc: string } {
   const dateObj = typeof date === 'string' ? new Date(date) : date
   const local = formatMadridDateTime(dateObj)
-  const utc = formatInTimeZone(dateObj, 'UTC', 'yyyy-MM-dd HH:mm UTC')
+  const utc = formatInTimeZone(dateObj, 'UTC', "yyyy-MM-dd HH:mm 'UTC'")
   return { local, utc }
 }
 
