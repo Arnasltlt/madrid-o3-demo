@@ -10,6 +10,9 @@ const sanitizePdfText = (value: string): string => {
     .replace(/µg\/m3/gi, 'ug/m3')
     .replace(/µ/gi, 'u')
     .replace(/₃/g, '3')
+    .replace(/≥/g, '>=')
+    .replace(/≤/g, '<=')
+    .replace(/O₃/g, 'O3')
 }
 
 type DrawTextOptions = Parameters<PDFPage['drawText']>[1]
@@ -23,10 +26,10 @@ const THRESHOLD_UGM3 = 180
 export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create()
   const page = pdfDoc.addPage([595.28, 841.89]) // A4 size
-
+  
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
-
+  
   const wrapText = (text: string, fontSize: number, maxWidth: number): string[] => {
     const sanitized = sanitizePdfText(text)
     const words = sanitized.split(/\s+/).filter(Boolean)
@@ -53,12 +56,12 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
   }
 
   const notice = buildNoticeContent(status)
-
+  
   const snapshotId = createHash('sha1')
     .update(`${status.as_of_utc}${status.status}${status.max_1h.timestamp_utc}`)
     .digest('hex')
     .substring(0, 8)
-
+  
   const pageWidth = page.getWidth()
   const pageHeight = page.getHeight()
   const margin = 50
@@ -193,7 +196,7 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
       renderTableHeader(currentPage, yPos)
       yPos -= tableRowHeight
     }
-
+    
     const horaTime = formatDateTimeWithUTC(station.timestamp_utc)
     const isTriggerRow = triggerStationId === station.id
     if (isTriggerRow) {
@@ -229,7 +232,7 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
     size: 8,
     font,
   })
-
+  
   const pdfBytes = await pdfDoc.save()
   return Buffer.from(pdfBytes)
 }

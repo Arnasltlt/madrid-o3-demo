@@ -333,6 +333,11 @@ a.skip-link:focus {
   font-variant-numeric: tabular-nums;
 }
 
+.gov-numeric {
+  font-family: var(--font-family-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
 .gov-table__trigger {
   border-left: 3px solid var(--color-accent);
 }

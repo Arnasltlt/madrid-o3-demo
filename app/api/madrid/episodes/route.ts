@@ -24,7 +24,7 @@ export async function GET() {
             }
           : null,
         o3_max_1h_ugm3: snapshot.max_1h?.value ?? null,
-        pdf_url: `/madrid/episodes/${id}.pdf`,
+        pdf_url: `/madrid/episodes/${id}/pdf`,
       }
     })
 
