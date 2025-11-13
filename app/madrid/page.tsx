@@ -596,7 +596,7 @@ export default function MadridPage() {
       {isStale && (
         <div className="gov-banner gov-banner--stale" role="alert" aria-live="polite">
           <ClockIcon className="gov-icon" aria-hidden="true" />
-          <span>Datos retrasados (&gt;90 min). Estado congelado.</span>
+          <span><strong>Datos retrasados – estado congelado</strong> (edad: {dataAgeLabel})</span>
         </div>
       )}
       {coverageReduced && (
@@ -719,13 +719,13 @@ export default function MadridPage() {
           <p className="gov-footnote">Este formato automatiza el contenido exigido. Unidades: µg/m³.</p>
       </section>
 
-        <section>
+        <section className="gov-section">
           <h2 className="gov-section-heading">Tabla de estaciones</h2>
           {hasStations ? (
             <div className="gov-table-wrapper">
               <table className="gov-table">
                 <caption className="visually-hidden">Valores horarios de estaciones representativas</caption>
-          <thead>
+                <thead>
                   <tr>
                     <th scope="col">ID</th>
                     <th scope="col">Estación</th>
@@ -734,32 +734,34 @@ export default function MadridPage() {
                     </th>
                     <th scope="col">Hora local</th>
                     <th scope="col">Hora UTC</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(statusForView?.stations || []).map((station) => {
-              const stationTime = safeFormatDateTime(station.timestamp_utc)
+                  </tr>
+                </thead>
+                <tbody>
+                  {(statusForView?.stations || []).map((station) => {
+                    const stationTime = safeFormatDateTime(station.timestamp_utc)
                     const isTriggerRow = triggerStationId ? station.id === triggerStationId : false
                     const rowClassName = isTriggerRow ? 'gov-table__trigger' : undefined
-              return (
+                    return (
                       <tr key={station.id} className={rowClassName} tabIndex={0} aria-label={isTriggerRow ? `Estación que disparó el umbral: ${station.name}` : undefined}>
                         <td>{station.id}</td>
                         <td>{station.name}</td>
-                        <td className="gov-table__numeric" aria-label={`${formatConcentration(station.value)} microgramos por metro cúbico`}>{formatConcentration(station.value)}</td>
+                        <td className="gov-table__numeric" aria-label={`${formatConcentration(station.value)} microgramos por metro cúbico`}>
+                          <span className="gov-numeric">{formatConcentration(station.value)}</span>
+                        </td>
                         <td>{stationTime?.local || 'Sin datos'}</td>
                         <td>{stationTime?.utc || 'N/D'}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : (
             <p className="gov-body" role="status">
               Sin datos de la última hora. Consulte la metodología.
             </p>
           )}
-      </section>
+        </section>
 
         {changeLogEntries.length > 0 && (
           <section>
@@ -775,30 +777,56 @@ export default function MadridPage() {
                   typeof entry.value === 'number' && Number.isFinite(entry.value)
                     ? `${formatConcentration(entry.value)} µg/m³`
                     : null
+                const fromStatusLabel = entry.from_status === 'INFO_EXCEEDED' ? 'UMBRAL DE INFORMACIÓN SUPERADO' : 'EN CUMPLIMIENTO'
+                const toStatusLabel = entry.to_status === 'INFO_EXCEEDED' ? 'UMBRAL DE INFORMACIÓN SUPERADO' : 'EN CUMPLIMIENTO'
+                const toStatusBadgeClass = entry.to_status === 'INFO_EXCEEDED' ? 'gov-badge gov-badge--warn gov-badge--small' : 'gov-badge gov-badge--ok gov-badge--small'
+                const toStatusIcon = entry.to_status === 'INFO_EXCEEDED' ? <AlertTriangleIcon className="gov-icon gov-icon--small" /> : <CheckCircleIcon className="gov-icon gov-icon--small" />
               return (
                   <li key={`${entry.timestamp}-${index}`} className="gov-timeline__item">
-                    <p className="gov-timeline__time">
-                      {changeTime?.local || 'Sin datos'}{' '}
-                      <span className="gov-muted">({changeTime?.utc || 'N/D'})</span>
-                    </p>
+                    <div className="gov-timeline__header">
+                      <p className="gov-timeline__time">
+                        {changeTime?.local || 'Sin datos'}{' '}
+                        <span className="gov-muted">({changeTime?.utc || 'N/D'})</span>
+                      </p>
+                      <span className={toStatusBadgeClass} role="status" aria-label={`Estado: ${toStatusLabel}`}>
+                        {toStatusIcon}
+                        <span>{toStatusLabel}</span>
+                      </span>
+                    </div>
                     <p className="gov-timeline__summary">
-                    {entry.from_status} → {entry.to_status}
+                      {fromStatusLabel} → {toStatusLabel}
                     </p>
-                    <p className="gov-timeline__detail">
-                      {entry.station_name
-                        ? `${entry.to_status === 'INFO_EXCEEDED' ? 'por' : 'en'} ${entry.station_name}${
-                            valueLabel ? ` ${valueLabel}` : ''
-                          }`
-                        : 'Sin estación asociada'}
-                      {hourTime ? ` · Hora: ${hourTime.local} (${hourTime.utc})` : ''}
-                      {entry.data_age_minutes_at_flip !== undefined ? ` · Edad ${entry.data_age_minutes_at_flip} min` : ''}
-                    </p>
-                    {matchingEpisode && (
-                      <a className="gov-link" href={matchingEpisode.pdf_url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir PDF congelado del episodio del ${changeTime?.local || 'episodio'}`}>
-                        <FilePdfIcon className="gov-icon gov-icon--inline" aria-hidden="true" />
-                        PDF congelado
-                      </a>
-                    )}
+                    <div className="gov-timeline__detail">
+                      {entry.station_name && (
+                        <p>
+                          <strong>Estación:</strong> {entry.station_name}
+                          {entry.station_id && <span className="gov-muted"> ({entry.station_id})</span>}
+                        </p>
+                      )}
+                      {valueLabel && (
+                        <p>
+                          <strong>Valor:</strong> <span className="gov-numeric">{formatConcentration(entry.value)}</span> µg/m³
+                        </p>
+                      )}
+                      {hourTime && (
+                        <p>
+                          <strong>Hora del dato:</strong> {hourTime.local} <span className="gov-muted">({hourTime.utc})</span>
+                        </p>
+                      )}
+                      {entry.data_age_minutes_at_flip !== undefined && (
+                        <p>
+                          <strong>Edad de datos:</strong> {entry.data_age_minutes_at_flip} min
+                        </p>
+                      )}
+                      {matchingEpisode && (
+                        <p>
+                          <a className="gov-link" href={matchingEpisode.pdf_url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir PDF congelado del episodio del ${changeTime?.local || 'episodio'}`}>
+                            <FilePdfIcon className="gov-icon gov-icon--inline" aria-hidden="true" />
+                            PDF congelado
+                          </a>
+                        </p>
+                      )}
+                    </div>
                   </li>
               )
             })}
