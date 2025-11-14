@@ -155,6 +155,8 @@ interface EpisodeSummary {
   pdf_url: string
 }
 
+type PdfAvailabilityStatus = 'pending' | 'available' | 'missing'
+
 function safeFormatDateTime(value?: string | null): FormattedDateTime | null {
   if (!value) {
     return null
@@ -310,6 +312,7 @@ export default function MadridPage() {
   const [statusContract, setStatusContract] = useState<StatusJsonContract | null>(null)
   const [changelog, setChangelog] = useState<ChangeLogEntry[]>([])
   const [episodes, setEpisodes] = useState<EpisodeSummary[]>([])
+  const [pdfAvailability, setPdfAvailability] = useState<Record<string, PdfAvailabilityStatus>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const previousStatusRef = useRef<Status | null>(null)
@@ -320,6 +323,46 @@ export default function MadridPage() {
     void fetchChangelog()
     void fetchEpisodes()
   }, [])
+
+  useEffect(() => {
+    const episodesToCheck = episodes.filter((episode) => !(episode.id in pdfAvailability))
+    if (episodesToCheck.length === 0) {
+      return
+    }
+
+    let isCancelled = false
+
+    episodesToCheck.forEach((episode) => {
+      setPdfAvailability((prev) => ({
+        ...prev,
+        [episode.id]: 'pending',
+      }))
+
+      fetch(episode.pdf_url, { method: 'HEAD' })
+        .then((response) => {
+          if (isCancelled) {
+            return
+          }
+          setPdfAvailability((prev) => ({
+            ...prev,
+            [episode.id]: response.ok ? 'available' : 'missing',
+          }))
+        })
+        .catch(() => {
+          if (isCancelled) {
+            return
+          }
+          setPdfAvailability((prev) => ({
+            ...prev,
+            [episode.id]: 'missing',
+          }))
+        })
+    })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [episodes, pdfAvailability])
 
   const loadDemo = async (mode: 'exceeded' | 'compliant') => {
     setLoading(true)
@@ -773,6 +816,7 @@ export default function MadridPage() {
                 const matchingEpisode =
                   (entry.hour_utc && episodesByTrigger[entry.hour_utc]) ||
                   (entry.to_status === 'INFO_EXCEEDED' && episodesByTrigger[entry.timestamp])
+                const matchingEpisodeStatus = matchingEpisode ? pdfAvailability[matchingEpisode.id] : undefined
                 const valueLabel =
                   typeof entry.value === 'number' && Number.isFinite(entry.value)
                     ? `${formatConcentration(entry.value)} µg/m³`
@@ -818,13 +862,25 @@ export default function MadridPage() {
                           <strong>Edad de datos:</strong> {entry.data_age_minutes_at_flip} min
                         </p>
                       )}
-                      {matchingEpisode && (
+                      {matchingEpisodeStatus === 'available' && matchingEpisode && (
                         <p>
-                          <a className="gov-link" href={matchingEpisode.pdf_url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir PDF congelado del episodio del ${changeTime?.local || 'episodio'}`}>
+                          <a
+                            className="gov-link"
+                            href={matchingEpisode.pdf_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Abrir PDF congelado del episodio del ${changeTime?.local || 'episodio'}`}
+                          >
                             <FilePdfIcon className="gov-icon gov-icon--inline" aria-hidden="true" />
                             PDF congelado
                           </a>
                         </p>
+                      )}
+                      {matchingEpisodeStatus === 'pending' && (
+                        <p className="gov-muted">Verificando PDF…</p>
+                      )}
+                      {matchingEpisodeStatus === 'missing' && (
+                        <p className="gov-muted">PDF congelado no disponible</p>
                       )}
                     </div>
                   </li>
@@ -844,6 +900,7 @@ export default function MadridPage() {
                   typeof episode.o3_max_1h_ugm3 === 'number' && Number.isFinite(episode.o3_max_1h_ugm3)
                     ? `${formatConcentration(episode.o3_max_1h_ugm3)} µg/m³`
                     : 'Sin datos'
+              const episodePdfStatus = pdfAvailability[episode.id]
               return (
                   <article key={episode.id} className="gov-card gov-card--subtle">
                     <div className="gov-card__field">
@@ -869,10 +926,25 @@ export default function MadridPage() {
                         )}
                       </span>
                   </div>
-                    <a href={episode.pdf_url} className="gov-link" target="_blank" rel="noopener noreferrer" aria-label={`Abrir PDF congelado del episodio ${episode.id}`}>
-                      <FilePdfIcon className="gov-icon gov-icon--inline" aria-hidden="true" />
-                    Abrir PDF congelado
-                  </a>
+                    {episodePdfStatus === 'available' ? (
+                      <a
+                        href={episode.pdf_url}
+                        className="gov-link"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Abrir PDF congelado del episodio ${episode.id}`}
+                      >
+                        <FilePdfIcon className="gov-icon gov-icon--inline" aria-hidden="true" />
+                        Abrir PDF congelado
+                      </a>
+                    ) : episodePdfStatus === 'missing' ? (
+                      <span className="gov-link gov-link--disabled" role="text">
+                        <FilePdfIcon className="gov-icon gov-icon--inline" aria-hidden="true" />
+                        PDF no disponible
+                      </span>
+                    ) : (
+                      <span className="gov-muted">Verificando PDF…</span>
+                    )}
                   </article>
               )
             })}

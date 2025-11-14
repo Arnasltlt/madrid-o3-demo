@@ -13,6 +13,8 @@ const sanitizePdfText = (value: string): string => {
     .replace(/≥/g, '>=')
     .replace(/≤/g, '<=')
     .replace(/O₃/g, 'O3')
+    .replace(/✓/g, '[OK]')
+    .replace(/…/g, '...')
 }
 
 type DrawTextOptions = Parameters<PDFPage['drawText']>[1]
@@ -36,15 +38,44 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
     const lines: string[] = []
     let currentLine = ''
 
+    const pushCurrentLine = () => {
+      if (currentLine) {
+        lines.push(currentLine)
+        currentLine = ''
+      }
+    }
+
+    const hardWrapWord = (word: string) => {
+      let remaining = word
+      // Break very long tokens so no single line exceeds maxWidth
+      while (remaining && font.widthOfTextAtSize(remaining, fontSize) > maxWidth) {
+        let sliceEnd = remaining.length
+        while (sliceEnd > 0 && font.widthOfTextAtSize(remaining.slice(0, sliceEnd), fontSize) > maxWidth) {
+          sliceEnd -= 1
+        }
+        if (sliceEnd <= 0) {
+          break
+        }
+        lines.push(remaining.slice(0, sliceEnd))
+        remaining = remaining.slice(sliceEnd)
+      }
+      if (remaining) {
+        currentLine = remaining
+      }
+    }
+
     words.forEach((word) => {
       const candidate = currentLine ? `${currentLine} ${word}` : word
       if (font.widthOfTextAtSize(candidate, fontSize) <= maxWidth) {
         currentLine = candidate
       } else {
-        if (currentLine) {
-          lines.push(currentLine)
+        pushCurrentLine()
+        // If the word itself is wider than the max width, hard-wrap it
+        if (font.widthOfTextAtSize(word, fontSize) > maxWidth) {
+          hardWrapWord(word)
+        } else {
+          currentLine = word
         }
-        currentLine = word
       }
     })
 
@@ -53,6 +84,26 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
     }
 
     return lines.length > 0 ? lines : ['']
+  }
+
+  const truncateToWidth = (text: string, fontSize: number, maxWidth: number): string => {
+    const sanitized = sanitizePdfText(text)
+    if (font.widthOfTextAtSize(sanitized, fontSize) <= maxWidth) {
+      return sanitized
+    }
+
+    let end = sanitized.length
+    const ellipsis = '…'
+
+    while (end > 0 && font.widthOfTextAtSize(sanitized.slice(0, end) + ellipsis, fontSize) > maxWidth) {
+      end -= 1
+    }
+
+    if (end <= 0) {
+      return ellipsis
+    }
+
+    return `${sanitized.slice(0, end)}${ellipsis}`
   }
 
   const notice = buildNoticeContent(status)
@@ -209,8 +260,11 @@ export async function generatePDF(status: StatusResponse): Promise<Buffer> {
       })
     }
 
+    const stationNameMaxWidth = tableColumns[2].x - tableColumns[1].x - 4
+    const safeStationName = truncateToWidth(station.name, 11, stationNameMaxWidth)
+
     drawTextSafe(currentPage, station.id, { x: tableColumns[0].x, y: yPos, size: 11, font })
-    drawTextSafe(currentPage, station.name.substring(0, 30), { x: tableColumns[1].x, y: yPos, size: 11, font })
+    drawTextSafe(currentPage, safeStationName, { x: tableColumns[1].x, y: yPos, size: 11, font })
     drawTextSafe(currentPage, station.value.toFixed(1), { x: tableColumns[2].x, y: yPos, size: 11, font })
     drawTextSafe(currentPage, horaTime.local.substring(0, 16), { x: tableColumns[3].x, y: yPos, size: 11, font })
     drawTextSafe(currentPage, horaTime.utc.substring(0, 16), { x: tableColumns[4].x, y: yPos, size: 11, font })

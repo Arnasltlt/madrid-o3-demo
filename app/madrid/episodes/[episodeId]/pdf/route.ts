@@ -11,8 +11,9 @@ interface RouteContext {
   }
 }
 
-export async function GET(_request: Request, { params }: RouteContext) {
+export async function GET(_request: Request, context: RouteContext) {
   try {
+    const params = await context.params
     const snapshot = findEpisodeSnapshot(params.episodeId)
     if (!snapshot) {
       return NextResponse.json({ error: 'Episode not found' }, { status: 404 })
@@ -35,6 +36,20 @@ export async function GET(_request: Request, { params }: RouteContext) {
       },
       { status: 500 }
     )
+  }
+}
+
+export async function HEAD(_request: Request, context: RouteContext) {
+  try {
+    const params = await context.params
+    const snapshot = findEpisodeSnapshot(params.episodeId)
+    if (!snapshot) {
+      return new NextResponse(null, { status: 404 })
+    }
+    return new NextResponse(null, { status: 200 })
+  } catch (error) {
+    console.error('Episode PDF HEAD error:', error)
+    return new NextResponse(null, { status: 500 })
   }
 }
 
